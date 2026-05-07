@@ -1,407 +1,897 @@
+<?php
+session_start();
+
+// ─── USER DATABASE (stored in session for demo; works without a real DB) ───
+if (!isset($_SESSION['users'])) {
+    $_SESSION['users'] = [
+        'demo' => password_hash('demo123', PASSWORD_DEFAULT)
+    ];
+}
+
+$message = '';
+$message_type = '';
+
+// ─── HANDLE REGISTER ───────────────────────────────────────────────────────
+if (isset($_POST['action']) && $_POST['action'] === 'register') {
+    $u = trim($_POST['username'] ?? '');
+    $p = $_POST['password'] ?? '';
+    $c = $_POST['confirm'] ?? '';
+    if (strlen($u) < 3) {
+        $message = 'Username must be at least 3 characters.';
+        $message_type = 'error';
+    } elseif (strlen($p) < 6) {
+        $message = 'Password must be at least 6 characters.';
+        $message_type = 'error';
+    } elseif ($p !== $c) {
+        $message = 'Passwords do not match.';
+        $message_type = 'error';
+    } elseif (isset($_SESSION['users'][$u])) {
+        $message = 'Username already exists.';
+        $message_type = 'error';
+    } else {
+        $_SESSION['users'][$u] = password_hash($p, PASSWORD_DEFAULT);
+        $message = 'Account created! Please log in.';
+        $message_type = 'success';
+    }
+}
+
+// ─── HANDLE LOGIN ──────────────────────────────────────────────────────────
+if (isset($_POST['action']) && $_POST['action'] === 'login') {
+    $u = trim($_POST['username'] ?? '');
+    $p = $_POST['password'] ?? '';
+    if (isset($_SESSION['users'][$u]) && password_verify($p, $_SESSION['users'][$u])) {
+        $_SESSION['logged_in'] = true;
+        $_SESSION['username'] = $u;
+        if (!isset($_SESSION['scores'][$u])) {
+            $_SESSION['scores'][$u] = ['level' => 1, 'best' => []];
+        }
+    } else {
+        $message = 'Invalid username or password.';
+        $message_type = 'error';
+    }
+}
+
+// ─── HANDLE LOGOUT ─────────────────────────────────────────────────────────
+if (isset($_GET['logout'])) {
+    $_SESSION['logged_in'] = false;
+    $_SESSION['username'] = '';
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// ─── HANDLE SCORE SAVE (AJAX) ──────────────────────────────────────────────
+if (isset($_POST['action']) && $_POST['action'] === 'save_score' && $_SESSION['logged_in']) {
+    $level = intval($_POST['level'] ?? 1);
+    $moves = intval($_POST['moves'] ?? 999);
+    $time  = intval($_POST['time'] ?? 999);
+    $u = $_SESSION['username'];
+    $key = 'level_' . $level;
+    $current_best = $_SESSION['scores'][$u]['best'][$key] ?? null;
+    if ($current_best === null || $moves < $current_best['moves'] || ($moves === $current_best['moves'] && $time < $current_best['time'])) {
+        $_SESSION['scores'][$u]['best'][$key] = ['moves' => $moves, 'time' => $time];
+    }
+    if ($level >= ($_SESSION['scores'][$u]['level'] ?? 1)) {
+        $_SESSION['scores'][$u]['level'] = min($level + 1, 5);
+    }
+    echo json_encode(['ok' => true, 'unlocked_level' => $_SESSION['scores'][$u]['level']]);
+    exit;
+}
+
+// ─── HANDLE GET SCORES (AJAX) ──────────────────────────────────────────────
+if (isset($_GET['get_scores']) && $_SESSION['logged_in']) {
+    $u = $_SESSION['username'];
+    echo json_encode($_SESSION['scores'][$u] ?? ['level' => 1, 'best' => []]);
+    exit;
+}
+
+$loggedIn = $_SESSION['logged_in'] ?? false;
+$username = $_SESSION['username'] ?? '';
+?>
 <!DOCTYPE html>
-<html lang="ta">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Memory Card Game</title>
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
+<title>MemoryQuest – Card Game</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;600&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #0f0e17;
-    --surface: #1a1830;
-    --card-back: #252340;
-    --accent: #ff6b6b;
-    --accent2: #ffd93d;
-    --accent3: #6bcb77;
-    --accent4: #4d96ff;
-    --text: #fffffe;
-    --muted: #a7a9be;
-    --border: #3d3a6b;
-  }
+/* ─── RESET & BASE ────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:        #03050f;
+  --bg2:       #070d1f;
+  --surface:   #0d1630;
+  --border:    #1a2a5e;
+  --accent:    #00d4ff;
+  --accent2:   #ff3cac;
+  --accent3:   #7b2fff;
+  --gold:      #ffd700;
+  --text:      #c8d8ff;
+  --text-dim:  #5a72b0;
+  --card-back: linear-gradient(135deg, #0d1630 0%, #1a2a5e 50%, #0d1630 100%);
+  --success:   #00ff88;
+  --error:     #ff4455;
+  --radius:    12px;
+  --glow:      0 0 20px rgba(0,212,255,0.4);
+}
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Exo 2', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+/* ─── ANIMATED BACKGROUND ────────────────────────── */
+.bg-stars {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse at 20% 20%, rgba(123,47,255,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(0,212,255,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(255,60,172,0.04) 0%, transparent 60%);
+}
+.bg-stars::after {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    radial-gradient(1px 1px at 10% 15%, rgba(255,255,255,0.5) 0%, transparent 100%),
+    radial-gradient(1px 1px at 30% 45%, rgba(255,255,255,0.3) 0%, transparent 100%),
+    radial-gradient(1px 1px at 60% 25%, rgba(255,255,255,0.4) 0%, transparent 100%),
+    radial-gradient(1px 1px at 80% 70%, rgba(255,255,255,0.3) 0%, transparent 100%),
+    radial-gradient(1px 1px at 45% 80%, rgba(255,255,255,0.5) 0%, transparent 100%),
+    radial-gradient(1px 1px at 90% 10%, rgba(255,255,255,0.4) 0%, transparent 100%),
+    radial-gradient(1px 1px at 5% 90%, rgba(255,255,255,0.3) 0%, transparent 100%),
+    radial-gradient(1px 1px at 70% 55%, rgba(255,255,255,0.2) 0%, transparent 100%);
+  animation: twinkle 4s ease-in-out infinite alternate;
+}
+@keyframes twinkle { from { opacity: 0.6; } to { opacity: 1; } }
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Nunito', sans-serif;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 24px 16px;
-    background-image:
-      radial-gradient(ellipse at 20% 20%, rgba(77, 150, 255, 0.08) 0%, transparent 50%),
-      radial-gradient(ellipse at 80% 80%, rgba(255, 107, 107, 0.08) 0%, transparent 50%);
-  }
+/* ─── LAYOUT ─────────────────────────────────────── */
+.wrapper {
+  position: relative; z-index: 1;
+  min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 20px 16px 40px;
+}
 
-  h1 {
-    font-family: 'Press Start 2P', monospace;
-    font-size: clamp(14px, 3vw, 22px);
-    color: var(--accent2);
-    text-align: center;
-    margin-bottom: 6px;
-    text-shadow: 3px 3px 0px rgba(255, 107, 107, 0.5);
-    letter-spacing: 2px;
-  }
+/* ─── HEADER ─────────────────────────────────────── */
+header {
+  width: 100%; max-width: 900px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 24px;
+  background: rgba(13,22,48,0.8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(12px);
+  margin-bottom: 32px;
+}
+.logo {
+  font-family: 'Orbitron', monospace;
+  font-weight: 900; font-size: 1.4rem;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  letter-spacing: 2px;
+}
+.header-user {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 0.85rem; color: var(--text-dim);
+}
+.header-user strong { color: var(--accent); }
+.btn-logout {
+  background: transparent; border: 1px solid var(--error);
+  color: var(--error); padding: 6px 14px; border-radius: 6px;
+  cursor: pointer; font-family: 'Exo 2', sans-serif; font-size: 0.8rem;
+  transition: all 0.2s;
+}
+.btn-logout:hover { background: var(--error); color: #fff; }
 
-  .subtitle {
-    font-size: 13px;
-    color: var(--muted);
-    margin-bottom: 20px;
-    text-align: center;
-  }
+/* ─── AUTH SCREENS ───────────────────────────────── */
+.auth-container {
+  width: 100%; max-width: 420px;
+  animation: fadeUp 0.5s ease both;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.auth-card {
+  background: rgba(13,22,48,0.9);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 40px 36px;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.auth-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.8rem; font-weight: 900; text-align: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent3));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+}
+.auth-subtitle {
+  text-align: center; color: var(--text-dim); font-size: 0.85rem;
+  margin-bottom: 28px;
+}
+.form-group { margin-bottom: 18px; }
+.form-group label {
+  display: block; font-size: 0.78rem; font-weight: 600;
+  color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+.form-group input {
+  width: 100%; padding: 12px 16px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text);
+  font-family: 'Exo 2', sans-serif; font-size: 0.95rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  outline: none;
+}
+.form-group input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0,212,255,0.12);
+}
+.btn-primary {
+  width: 100%; padding: 14px;
+  background: linear-gradient(135deg, var(--accent3), var(--accent));
+  border: none; border-radius: 10px; color: #fff;
+  font-family: 'Orbitron', monospace; font-size: 0.9rem; font-weight: 700;
+  letter-spacing: 1px; cursor: pointer; text-transform: uppercase;
+  transition: all 0.25s; box-shadow: 0 4px 20px rgba(0,212,255,0.25);
+  margin-top: 8px;
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(0,212,255,0.4);
+}
+.btn-primary:active { transform: translateY(0); }
+.auth-switch {
+  text-align: center; margin-top: 20px;
+  font-size: 0.85rem; color: var(--text-dim);
+}
+.auth-switch a {
+  color: var(--accent); text-decoration: none; font-weight: 600;
+  cursor: pointer;
+}
+.auth-switch a:hover { text-decoration: underline; }
+.msg {
+  padding: 10px 14px; border-radius: 8px;
+  font-size: 0.85rem; margin-bottom: 18px; text-align: center;
+}
+.msg.error   { background: rgba(255,68,85,0.15); border: 1px solid var(--error); color: var(--error); }
+.msg.success { background: rgba(0,255,136,0.1); border: 1px solid var(--success); color: var(--success); }
 
-  .stats {
-    display: flex;
-    gap: 16px;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
+/* ─── GAME SCREEN ────────────────────────────────── */
+.game-container {
+  width: 100%; max-width: 900px;
+  animation: fadeUp 0.4s ease both;
+}
 
-  .stat-box {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 10px 20px;
-    text-align: center;
-    min-width: 100px;
-  }
+/* ─── LEVEL SELECT ───────────────────────────────── */
+.screen { display: none; }
+.screen.active { display: block; }
 
-  .stat-label {
-    font-size: 10px;
-    color: var(--muted);
-    font-family: 'Press Start 2P', monospace;
-    display: block;
-    margin-bottom: 4px;
-  }
+.level-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.6rem; font-weight: 900; text-align: center;
+  color: var(--accent); margin-bottom: 8px;
+}
+.level-subtitle {
+  text-align: center; color: var(--text-dim); margin-bottom: 32px; font-size: 0.9rem;
+}
+.levels-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px; margin-bottom: 24px;
+}
+.level-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px; padding: 24px 16px;
+  text-align: center; cursor: pointer;
+  transition: all 0.25s; position: relative; overflow: hidden;
+}
+.level-card::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(135deg, transparent, rgba(0,212,255,0.03));
+  opacity: 0; transition: opacity 0.25s;
+}
+.level-card:hover::before { opacity: 1; }
+.level-card.unlocked:hover {
+  border-color: var(--accent);
+  transform: translateY(-4px);
+  box-shadow: var(--glow);
+}
+.level-card.locked {
+  opacity: 0.4; cursor: not-allowed;
+}
+.level-card.locked:hover { transform: none; box-shadow: none; }
+.level-icon { font-size: 2.2rem; margin-bottom: 8px; }
+.level-name {
+  font-family: 'Orbitron', monospace; font-size: 0.8rem; font-weight: 700;
+  color: var(--accent); letter-spacing: 1px; margin-bottom: 4px;
+}
+.level-info { font-size: 0.75rem; color: var(--text-dim); }
+.level-best { font-size: 0.72rem; color: var(--gold); margin-top: 6px; }
+.level-lock { font-size: 1rem; position: absolute; top: 10px; right: 10px; }
 
-  .stat-value {
-    font-size: 22px;
-    font-weight: 900;
-    color: var(--accent2);
-  }
+/* ─── GAME BOARD ─────────────────────────────────── */
+.game-header {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 20px; margin-bottom: 20px;
+}
+.game-stat {
+  text-align: center;
+}
+.game-stat .label {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-dim); margin-bottom: 2px;
+}
+.game-stat .value {
+  font-family: 'Orbitron', monospace; font-size: 1.1rem; font-weight: 700;
+  color: var(--accent);
+}
+.btn-back {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-dim); padding: 8px 16px; border-radius: 8px;
+  cursor: pointer; font-family: 'Exo 2', sans-serif; font-size: 0.82rem;
+  transition: all 0.2s;
+}
+.btn-back:hover { border-color: var(--accent); color: var(--accent); }
 
-  .stat-value.moves { color: var(--accent4); }
-  .stat-value.time  { color: var(--accent3); }
+.card-grid {
+  display: grid; gap: 10px;
+  justify-content: center; margin-bottom: 20px;
+}
+/* grid columns set dynamically by JS */
 
-  .board {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    max-width: 440px;
-    width: 100%;
-    margin-bottom: 20px;
-  }
+/* ─── CARD ───────────────────────────────────────── */
+.card {
+  aspect-ratio: 1;
+  perspective: 600px;
+  cursor: pointer;
+}
+.card-inner {
+  width: 100%; height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.45s cubic-bezier(0.4,0,0.2,1);
+}
+.card.flipped .card-inner   { transform: rotateY(180deg); }
+.card.matched .card-inner   { transform: rotateY(180deg); }
+.card.matched .card-front   { border-color: var(--success); box-shadow: 0 0 16px rgba(0,255,136,0.4); }
+.card-front, .card-back {
+  position: absolute; inset: 0;
+  backface-visibility: hidden;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2rem;
+}
+.card-back {
+  background: var(--card-back);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.card-back::after {
+  content: '?';
+  font-family: 'Orbitron', monospace; font-weight: 900;
+  font-size: 1.4rem; color: var(--border);
+}
+.card-front {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  transform: rotateY(180deg);
+  user-select: none;
+}
+.card:not(.matched):not(.flipped):hover .card-back {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(0,212,255,0.25);
+}
+.card.shake .card-inner {
+  animation: shake 0.4s ease;
+}
+@keyframes shake {
+  0%,100% { transform: rotateY(180deg) translateX(0); }
+  20%      { transform: rotateY(180deg) translateX(-5px); }
+  60%      { transform: rotateY(180deg) translateX(5px); }
+}
+.card.pop .card-front {
+  animation: pop 0.3s ease;
+}
+@keyframes pop {
+  0%   { transform: rotateY(180deg) scale(1); }
+  50%  { transform: rotateY(180deg) scale(1.15); }
+  100% { transform: rotateY(180deg) scale(1); }
+}
 
-  .card {
-    aspect-ratio: 1;
-    cursor: pointer;
-    perspective: 800px;
-    border-radius: 14px;
-  }
+/* ─── MODAL ──────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,0.75);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.3s;
+  backdrop-filter: blur(6px);
+}
+.modal-overlay.show { opacity: 1; pointer-events: all; }
+.modal {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 20px; padding: 40px 36px;
+  text-align: center; max-width: 380px; width: 90%;
+  transform: scale(0.85); transition: transform 0.3s;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+}
+.modal-overlay.show .modal { transform: scale(1); }
+.modal-icon  { font-size: 3.5rem; margin-bottom: 12px; }
+.modal-title {
+  font-family: 'Orbitron', monospace; font-size: 1.4rem; font-weight: 900;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.modal-stats {
+  display: flex; justify-content: center; gap: 24px;
+  margin: 18px 0;
+}
+.mstat { text-align: center; }
+.mstat .ml { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
+.mstat .mv { font-family: 'Orbitron', monospace; font-size: 1.3rem; color: var(--gold); }
+.modal-msg { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 20px; }
+.modal-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.btn-modal {
+  padding: 11px 22px; border-radius: 10px;
+  font-family: 'Orbitron', monospace; font-size: 0.78rem; font-weight: 700;
+  letter-spacing: 1px; cursor: pointer; border: none; text-transform: uppercase;
+  transition: all 0.2s;
+}
+.btn-modal.primary {
+  background: linear-gradient(135deg, var(--accent3), var(--accent));
+  color: #fff; box-shadow: 0 4px 16px rgba(0,212,255,0.3);
+}
+.btn-modal.primary:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,212,255,0.45); }
+.btn-modal.secondary {
+  background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+}
+.btn-modal.secondary:hover { border-color: var(--accent); color: var(--accent); }
 
-  .card-inner {
-    width: 100%; height: 100%;
-    position: relative;
-    transform-style: preserve-3d;
-    transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    border-radius: 14px;
-  }
+/* ─── PROGRESS BAR ───────────────────────────────── */
+.progress-bar {
+  height: 4px; background: var(--border); border-radius: 2px;
+  margin-bottom: 20px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent3), var(--accent));
+  transition: width 0.4s ease;
+}
 
-  .card.flipped .card-inner,
-  .card.matched .card-inner {
-    transform: rotateY(180deg);
-  }
+/* ─── CONFETTI ───────────────────────────────────── */
+.confetti-piece {
+  position: fixed; width: 8px; height: 8px; z-index: 200;
+  pointer-events: none; border-radius: 2px;
+  animation: confettiFall linear forwards;
+}
+@keyframes confettiFall {
+  0%   { opacity: 1; transform: translateY(-20px) rotate(0deg); }
+  100% { opacity: 0; transform: translateY(100vh) rotate(720deg); }
+}
 
-  .card-front, .card-back {
-    position: absolute;
-    inset: 0;
-    border-radius: 14px;
-    backface-visibility: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .card-back {
-    background: var(--card-back);
-    border: 2px solid var(--border);
-    font-size: 22px;
-    color: var(--border);
-    font-family: 'Press Start 2P', monospace;
-    font-size: 18px;
-    transition: border-color 0.2s, background 0.2s;
-  }
-
-  .card:hover:not(.flipped):not(.matched) .card-back {
-    border-color: var(--accent4);
-    background: #2a2750;
-  }
-
-  .card-front {
-    background: var(--surface);
-    border: 2px solid var(--border);
-    transform: rotateY(180deg);
-    font-size: clamp(26px, 6vw, 36px);
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .card.matched .card-front {
-    border-color: var(--accent3);
-    background: rgba(107, 203, 119, 0.1);
-    animation: matchPop 0.4s ease;
-  }
-
-  @keyframes matchPop {
-    0%   { transform: rotateY(180deg) scale(1); }
-    50%  { transform: rotateY(180deg) scale(1.12); }
-    100% { transform: rotateY(180deg) scale(1); }
-  }
-
-  .card.wrong .card-inner {
-    animation: shake 0.4s ease;
-  }
-
-  @keyframes shake {
-    0%,100% { transform: rotateY(180deg) translateX(0); }
-    25%      { transform: rotateY(180deg) translateX(-6px); }
-    75%      { transform: rotateY(180deg) translateX(6px); }
-  }
-
-  .btn {
-    font-family: 'Press Start 2P', monospace;
-    font-size: 11px;
-    padding: 12px 24px;
-    border-radius: 10px;
-    border: none;
-    cursor: pointer;
-    transition: transform 0.1s, box-shadow 0.1s;
-    letter-spacing: 1px;
-  }
-
-  .btn:active { transform: scale(0.96); }
-
-  .btn-primary {
-    background: var(--accent);
-    color: #fff;
-    box-shadow: 0 4px 0 #b84a4a;
-  }
-
-  .btn-primary:hover { box-shadow: 0 6px 0 #b84a4a; transform: translateY(-2px); }
-
-  .overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(10, 9, 20, 0.92);
-    z-index: 100;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 20px;
-    text-align: center;
-    padding: 24px;
-  }
-
-  .overlay.show { display: flex; }
-
-  .overlay h2 {
-    font-family: 'Press Start 2P', monospace;
-    font-size: clamp(16px, 4vw, 28px);
-    color: var(--accent2);
-    text-shadow: 3px 3px 0 var(--accent);
-    line-height: 1.6;
-  }
-
-  .overlay p {
-    color: var(--muted);
-    font-size: 15px;
-    line-height: 1.7;
-  }
-
-  .overlay .big { font-size: 52px; }
-
-  .stars { font-size: 32px; letter-spacing: 4px; }
-
-  .progress-bar {
-    width: 100%;
-    max-width: 440px;
-    height: 6px;
-    background: var(--surface);
-    border-radius: 99px;
-    margin-bottom: 8px;
-    overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent4), var(--accent3));
-    border-radius: 99px;
-    transition: width 0.4s ease;
-    width: 0%;
-  }
-
-  .progress-label {
-    font-size: 12px;
-    color: var(--muted);
-    text-align: right;
-    width: 100%;
-    max-width: 440px;
-    margin-bottom: 16px;
-  }
+/* ─── RESPONSIVE ─────────────────────────────────── */
+@media (max-width: 500px) {
+  .auth-card { padding: 28px 20px; }
+  .levels-grid { grid-template-columns: repeat(2, 1fr); }
+  .card-grid { gap: 7px; }
+  .game-header { flex-wrap: wrap; gap: 8px; }
+}
 </style>
 </head>
 <body>
+<div class="bg-stars"></div>
+<div class="wrapper">
 
-<h1>MEMORY GAME</h1>
-<p class="subtitle">Cards match பண்ணி score பண்ணுங்க!</p>
+  <!-- ─── HEADER ─────────────────────────────────── -->
+  <header>
+    <div class="logo">⚡ MemoryQuest</div>
+    <?php if ($loggedIn): ?>
+    <div class="header-user">
+      <span>Welcome, <strong><?= htmlspecialchars($username) ?></strong></span>
+      <a href="?logout=1"><button class="btn-logout">Logout</button></a>
+    </div>
+    <?php else: ?>
+    <div class="header-user">Card Memory Game</div>
+    <?php endif; ?>
+  </header>
 
-<div class="stats">
-  <div class="stat-box">
-    <span class="stat-label">SCORE</span>
-    <span class="stat-value" id="score">0</span>
+  <!-- ════════════════════════════════════════════ -->
+  <!-- ─── AUTH SECTION (PHP-rendered) ─────────── -->
+  <!-- ════════════════════════════════════════════ -->
+  <?php if (!$loggedIn): ?>
+  <div class="auth-container">
+
+    <!-- LOGIN FORM -->
+    <div id="loginForm" class="auth-card" style="display:block;">
+      <div class="auth-title">🧠 LOGIN</div>
+      <div class="auth-subtitle">Enter the Memory Arena</div>
+
+      <?php if ($message): ?>
+      <div class="msg <?= $message_type ?>"><?= htmlspecialchars($message) ?></div>
+      <?php endif; ?>
+
+      <form method="POST">
+        <input type="hidden" name="action" value="login">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" name="username" placeholder="Enter username" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" name="password" placeholder="Enter password" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn-primary">⚡ Enter Game</button>
+      </form>
+
+      <div class="auth-switch">
+        No account? <a onclick="toggleAuth()">Create one</a>
+        &nbsp;|&nbsp; Demo: <strong style="color:var(--accent)">demo / demo123</strong>
+      </div>
+    </div>
+
+    <!-- REGISTER FORM -->
+    <div id="registerForm" class="auth-card" style="display:none;">
+      <div class="auth-title">🚀 REGISTER</div>
+      <div class="auth-subtitle">Join the Memory Arena</div>
+
+      <?php if ($message && $message_type === 'error'): ?>
+      <div class="msg error"><?= htmlspecialchars($message) ?></div>
+      <?php endif; ?>
+      <?php if ($message && $message_type === 'success'): ?>
+      <div class="msg success"><?= htmlspecialchars($message) ?></div>
+      <?php endif; ?>
+
+      <form method="POST">
+        <input type="hidden" name="action" value="register">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" name="username" placeholder="Choose a username" required minlength="3">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" name="password" placeholder="Min 6 characters" required minlength="6">
+        </div>
+        <div class="form-group">
+          <label>Confirm Password</label>
+          <input type="password" name="confirm" placeholder="Repeat password" required>
+        </div>
+        <button type="submit" class="btn-primary">🎮 Create Account</button>
+      </form>
+
+      <div class="auth-switch">
+        Have an account? <a onclick="toggleAuth()">Login</a>
+      </div>
+    </div>
   </div>
-  <div class="stat-box">
-    <span class="stat-label">MOVES</span>
-    <span class="stat-value moves" id="moves">0</span>
+
+  <?php else: ?>
+  <!-- ════════════════════════════════════════════ -->
+  <!-- ─── GAME SECTION (JS-driven) ────────────── -->
+  <!-- ════════════════════════════════════════════ -->
+  <div class="game-container">
+
+    <!-- ─── LEVEL SELECT SCREEN ───────────────── -->
+    <div id="screenLevels" class="screen active">
+      <div class="level-title">🎮 SELECT LEVEL</div>
+      <div class="level-subtitle">Match all pairs to unlock the next level!</div>
+      <div class="levels-grid" id="levelsGrid"></div>
+    </div>
+
+    <!-- ─── GAME BOARD SCREEN ─────────────────── -->
+    <div id="screenGame" class="screen">
+      <div class="game-header">
+        <button class="btn-back" onclick="goLevelSelect()">← Levels</button>
+        <div class="game-stat">
+          <div class="label">Level</div>
+          <div class="value" id="statLevel">1</div>
+        </div>
+        <div class="game-stat">
+          <div class="label">Moves</div>
+          <div class="value" id="statMoves">0</div>
+        </div>
+        <div class="game-stat">
+          <div class="label">Time</div>
+          <div class="value" id="statTime">0s</div>
+        </div>
+        <div class="game-stat">
+          <div class="label">Pairs</div>
+          <div class="value" id="statPairs">0/0</div>
+        </div>
+        <button class="btn-modal secondary" style="padding:8px 14px;font-size:0.78rem;border-radius:8px;cursor:pointer;background:transparent;border:1px solid var(--border);color:var(--text-dim);font-family:'Exo 2',sans-serif;" onclick="restartGame()">↺ Restart</button>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+      <div class="card-grid" id="cardGrid"></div>
+    </div>
   </div>
-  <div class="stat-box">
-    <span class="stat-label">TIME</span>
-    <span class="stat-value time" id="timer">0s</span>
+
+  <!-- ─── WIN MODAL ─────────────────────────────── -->
+  <div class="modal-overlay" id="winModal">
+    <div class="modal">
+      <div class="modal-icon">🏆</div>
+      <div class="modal-title">Level Complete!</div>
+      <div class="modal-stats">
+        <div class="mstat"><div class="ml">Moves</div><div class="mv" id="mMoves">0</div></div>
+        <div class="mstat"><div class="ml">Time</div><div class="mv" id="mTime">0s</div></div>
+        <div class="mstat"><div class="ml">Stars</div><div class="mv" id="mStars">⭐⭐⭐</div></div>
+      </div>
+      <div class="modal-msg" id="mMsg">Excellent memory!</div>
+      <div class="modal-btns">
+        <button class="btn-modal primary" id="btnNextLevel">Next Level ➜</button>
+        <button class="btn-modal secondary" onclick="restartGame()">↺ Retry</button>
+        <button class="btn-modal secondary" onclick="goLevelSelect()">📋 Levels</button>
+      </div>
+    </div>
   </div>
-</div>
 
-<div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
-<div class="progress-label" id="progress-label">0 / 8 pairs matched</div>
-
-<div class="board" id="board"></div>
-
-<button class="btn btn-primary" onclick="initGame()">NEW GAME</button>
-
-<div class="overlay" id="overlay">
-  <div class="big" id="overlay-emoji">🎉</div>
-  <h2 id="overlay-title">YOU WIN!</h2>
-  <div class="stars" id="overlay-stars">⭐⭐⭐</div>
-  <p id="overlay-msg">Great job!</p>
-  <button class="btn btn-primary" onclick="closeOverlay()">PLAY AGAIN</button>
-</div>
+  <?php endif; ?>
+</div><!-- /wrapper -->
 
 <script>
-  const EMOJIS = ['🍕','🎸','🚀','🦊','🌈','🎮','🍦','🐉','⚡','🎯','🦄','💎','🌺','🎲','🐬','🍩'];
-  const PAIRS = 8;
-
-  let cards = [], flipped = [], matched = 0, moves = 0, score = 0;
-  let canFlip = true, timerInterval = null, seconds = 0;
-
-  function shuffle(arr) {
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
+/* ══════════════════════════════════════════════════
+   AUTH TOGGLE
+══════════════════════════════════════════════════ */
+function toggleAuth() {
+  const l = document.getElementById('loginForm');
+  const r = document.getElementById('registerForm');
+  if (!l || !r) return;
+  if (l.style.display !== 'none') {
+    l.style.display = 'none'; r.style.display = 'block';
+  } else {
+    l.style.display = 'block'; r.style.display = 'none';
   }
+}
 
-  function initGame() {
-    clearInterval(timerInterval);
-    seconds = 0; moves = 0; score = 0; matched = 0;
-    flipped = []; canFlip = true;
-    updateStats();
-    updateProgress();
-    document.getElementById('timer').textContent = '0s';
+<?php if ($loggedIn): ?>
+/* ══════════════════════════════════════════════════
+   GAME DATA
+══════════════════════════════════════════════════ */
+const LEVELS = [
+  { id:1, name:'Rookie',    icon:'🌱', pairs:4,  cols:4, timeGoal:30,  moveGoal:10, emojis:'🐶🐱🐭🐹' },
+  { id:2, name:'Explorer',  icon:'🔥', pairs:6,  cols:4, timeGoal:45,  moveGoal:14, emojis:'🍎🍊🍋🍇🍓🍑' },
+  { id:3, name:'Warrior',   icon:'⚔️', pairs:8,  cols:4, timeGoal:60,  moveGoal:18, emojis:'🚀🌙⭐🌍☄️🛸🪐💫' },
+  { id:4, name:'Master',    icon:'💎', pairs:10, cols:5, timeGoal:75,  moveGoal:22, emojis:'🦁🐯🐻🦊🐺🦄🐲🦋🦅🐬' },
+  { id:5, name:'Legend',    icon:'👑', pairs:12, cols:6, timeGoal:90,  moveGoal:28, emojis:'🏆🥇🎯🎮🎲🎪🎨🎭🎬🎤🎸🎹' },
+];
 
-    const chosen = shuffle([...EMOJIS]).slice(0, PAIRS);
-    cards = shuffle([...chosen, ...chosen].map((emoji, i) => ({ emoji, id: i })));
+let playerData = { level: 1, best: {} };
+let currentLevel = null;
+let cards = [];
+let flipped = [];
+let matched = 0;
+let moves = 0;
+let timer = null;
+let seconds = 0;
+let locked = false;
+let totalPairs = 0;
 
-    const board = document.getElementById('board');
-    board.innerHTML = '';
-    cards.forEach((card, i) => {
-      const el = document.createElement('div');
-      el.className = 'card';
-      el.dataset.index = i;
-      el.innerHTML = `<div class="card-inner">
-        <div class="card-back">?</div>
-        <div class="card-front">${card.emoji}</div>
+/* ══════════════════════════════════════════════════
+   INIT
+══════════════════════════════════════════════════ */
+async function init() {
+  const res = await fetch('?get_scores=1');
+  playerData = await res.json();
+  renderLevels();
+}
+
+/* ══════════════════════════════════════════════════
+   LEVEL SELECT
+══════════════════════════════════════════════════ */
+function renderLevels() {
+  const grid = document.getElementById('levelsGrid');
+  grid.innerHTML = '';
+  LEVELS.forEach(lv => {
+    const unlocked = lv.id <= playerData.level;
+    const best = playerData.best['level_' + lv.id];
+    const div = document.createElement('div');
+    div.className = 'level-card ' + (unlocked ? 'unlocked' : 'locked');
+    div.innerHTML = `
+      <div class="level-icon">${lv.icon}</div>
+      <div class="level-name">LEVEL ${lv.id}</div>
+      <div class="level-info">${lv.name} · ${lv.pairs} Pairs</div>
+      ${best ? `<div class="level-best">⭐ Best: ${best.moves} moves, ${best.time}s</div>` : ''}
+      ${!unlocked ? '<div class="level-lock">🔒</div>' : ''}
+    `;
+    if (unlocked) div.onclick = () => startLevel(lv.id);
+    grid.appendChild(div);
+  });
+}
+
+function goLevelSelect() {
+  clearInterval(timer);
+  showScreen('screenLevels');
+  renderLevels();
+  hideModal();
+}
+
+/* ══════════════════════════════════════════════════
+   START LEVEL
+══════════════════════════════════════════════════ */
+function startLevel(lvId) {
+  currentLevel = LEVELS.find(l => l.id === lvId);
+  totalPairs = currentLevel.pairs;
+  matched = 0; moves = 0; seconds = 0; flipped = []; locked = false;
+  clearInterval(timer);
+
+  document.getElementById('statLevel').textContent = currentLevel.id;
+  document.getElementById('statMoves').textContent = '0';
+  document.getElementById('statTime').textContent  = '0s';
+  document.getElementById('statPairs').textContent = `0/${totalPairs}`;
+  document.getElementById('progressFill').style.width = '0%';
+
+  // Build card data
+  const emojis = currentLevel.emojis.split(/(?<=\p{Emoji_Presentation}|\p{Extended_Pictographic})/gu).filter(Boolean).slice(0, totalPairs);
+  let deck = [...emojis, ...emojis].sort(() => Math.random() - 0.5);
+
+  // Render grid
+  const grid = document.getElementById('cardGrid');
+  grid.innerHTML = '';
+  const cols = currentLevel.cols;
+  grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  const size = Math.min(Math.floor(580 / cols) - 10, 90);
+  grid.style.maxWidth = (size * cols + 10 * (cols - 1)) + 'px';
+
+  cards = deck.map((emoji, i) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.width = size + 'px'; card.style.height = size + 'px';
+    card.dataset.emoji = emoji;
+    card.dataset.index = i;
+    card.innerHTML = `
+      <div class="card-inner">
+        <div class="card-back"></div>
+        <div class="card-front" style="font-size:${Math.floor(size*0.42)}px">${emoji}</div>
       </div>`;
-      el.addEventListener('click', () => flipCard(el, i));
-      board.appendChild(el);
-    });
+    card.onclick = () => flipCard(card);
+    grid.appendChild(card);
+    return card;
+  });
 
-    timerInterval = setInterval(() => {
+  showScreen('screenGame');
+
+  // Start timer after short delay
+  setTimeout(() => {
+    timer = setInterval(() => {
       seconds++;
-      document.getElementById('timer').textContent = seconds + 's';
+      document.getElementById('statTime').textContent = seconds + 's';
     }, 1000);
-  }
+  }, 300);
+}
 
-  function flipCard(el, index) {
-    if (!canFlip || el.classList.contains('flipped') || el.classList.contains('matched')) return;
-    if (flipped.length === 0) el.classList.add('flipped'), flipped.push({ el, index });
-    else if (flipped.length === 1 && flipped[0].index !== index) {
-      el.classList.add('flipped');
-      flipped.push({ el, index });
-      moves++;
-      updateStats();
-      canFlip = false;
-      setTimeout(checkMatch, 900);
-    }
-  }
+function restartGame() { if (currentLevel) startLevel(currentLevel.id); }
 
-  function checkMatch() {
+/* ══════════════════════════════════════════════════
+   CARD FLIP LOGIC
+══════════════════════════════════════════════════ */
+function flipCard(card) {
+  if (locked || card.classList.contains('flipped') || card.classList.contains('matched')) return;
+  card.classList.add('flipped');
+  flipped.push(card);
+
+  if (flipped.length === 2) {
+    locked = true;
+    moves++;
+    document.getElementById('statMoves').textContent = moves;
+
     const [a, b] = flipped;
-    if (cards[a.index].emoji === cards[b.index].emoji) {
-      a.el.classList.add('matched');
-      b.el.classList.add('matched');
-      matched++;
-      score += Math.max(10, 50 - moves * 2);
-      updateStats();
-      updateProgress();
-      if (matched === PAIRS) setTimeout(showWin, 500);
-    } else {
-      a.el.classList.add('wrong');
-      b.el.classList.add('wrong');
+    if (a.dataset.emoji === b.dataset.emoji) {
+      // Match!
       setTimeout(() => {
-        a.el.classList.remove('flipped', 'wrong');
-        b.el.classList.remove('flipped', 'wrong');
-      }, 500);
+        a.classList.add('matched', 'pop');
+        b.classList.add('matched', 'pop');
+        matched++;
+        flipped = []; locked = false;
+        document.getElementById('statPairs').textContent = `${matched}/${totalPairs}`;
+        document.getElementById('progressFill').style.width = (matched / totalPairs * 100) + '%';
+        if (matched === totalPairs) onWin();
+      }, 300);
+    } else {
+      // No match
+      setTimeout(() => {
+        a.classList.add('shake'); b.classList.add('shake');
+        setTimeout(() => {
+          a.classList.remove('flipped', 'shake');
+          b.classList.remove('flipped', 'shake');
+          flipped = []; locked = false;
+        }, 400);
+      }, 600);
     }
-    flipped = [];
-    canFlip = true;
+  }
+}
+
+/* ══════════════════════════════════════════════════
+   WIN
+══════════════════════════════════════════════════ */
+async function onWin() {
+  clearInterval(timer);
+  const lv = currentLevel;
+  const stars = calcStars(lv, moves, seconds);
+
+  document.getElementById('mMoves').textContent = moves;
+  document.getElementById('mTime').textContent  = seconds + 's';
+  document.getElementById('mStars').textContent = '⭐'.repeat(stars) + '☆'.repeat(3 - stars);
+  document.getElementById('mMsg').textContent   = stars === 3 ? '🔥 Perfect! Flawless memory!' :
+                                                   stars === 2 ? '👏 Great job! Well played!' : '💪 Level cleared! Keep going!';
+
+  // Save score to PHP
+  const res = await fetch('', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `action=save_score&level=${lv.id}&moves=${moves}&time=${seconds}`
+  });
+  const data = await res.json();
+  playerData.level = data.unlocked_level;
+
+  // Next level button
+  const nextBtn = document.getElementById('btnNextLevel');
+  if (lv.id < 5) {
+    nextBtn.style.display = '';
+    nextBtn.onclick = () => { hideModal(); startLevel(lv.id + 1); };
+    nextBtn.textContent = `Next Level ➜`;
+  } else {
+    nextBtn.textContent = '🏆 All Levels Done!';
+    nextBtn.onclick = goLevelSelect;
   }
 
-  function updateStats() {
-    document.getElementById('score').textContent = score;
-    document.getElementById('moves').textContent = moves;
-  }
+  confetti();
+  showModal('winModal');
+}
 
-  function updateProgress() {
-    const pct = (matched / PAIRS) * 100;
-    document.getElementById('progress').style.width = pct + '%';
-    document.getElementById('progress-label').textContent = matched + ' / ' + PAIRS + ' pairs matched';
-  }
+function calcStars(lv, mv, t) {
+  if (mv <= lv.moveGoal && t <= lv.timeGoal) return 3;
+  if (mv <= lv.moveGoal * 1.5 && t <= lv.timeGoal * 1.5) return 2;
+  return 1;
+}
 
-  function showWin() {
-    clearInterval(timerInterval);
-    const stars = moves <= 12 ? '⭐⭐⭐' : moves <= 18 ? '⭐⭐' : '⭐';
-    const msgs = {
-      '⭐⭐⭐': 'Perfect! ' + seconds + 's-ல் ' + moves + ' moves மட்டும்! Master-level!',
-      '⭐⭐': 'Well done! ' + seconds + 's — இன்னும் கொஞ்சம் practice பண்ணு!',
-      '⭐': 'Completed! ' + seconds + 's — Next time faster try பண்ணு!'
-    };
-    document.getElementById('overlay-stars').textContent = stars;
-    document.getElementById('overlay-msg').textContent = msgs[stars];
-    document.getElementById('overlay-title').textContent = 'YOU WIN!';
-    document.getElementById('overlay-emoji').textContent = '🎉';
-    document.getElementById('overlay').classList.add('show');
-  }
+/* ══════════════════════════════════════════════════
+   HELPERS
+══════════════════════════════════════════════════ */
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+function showModal(id) { document.getElementById(id).classList.add('show'); }
+function hideModal()   { document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('show')); }
 
-  function closeOverlay() {
-    document.getElementById('overlay').classList.remove('show');
-    initGame();
+function confetti() {
+  const colors = ['#00d4ff','#ff3cac','#7b2fff','#ffd700','#00ff88'];
+  for (let i = 0; i < 60; i++) {
+    const el = document.createElement('div');
+    el.className = 'confetti-piece';
+    el.style.cssText = `
+      left: ${Math.random() * 100}vw;
+      top: -10px;
+      background: ${colors[Math.floor(Math.random() * colors.length)]};
+      width: ${5 + Math.random() * 8}px;
+      height: ${5 + Math.random() * 8}px;
+      animation-duration: ${1.5 + Math.random() * 2}s;
+      animation-delay: ${Math.random() * 0.5}s;
+      border-radius: ${Math.random() > 0.5 ? '50%' : '2px'};
+    `;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 4000);
   }
+}
 
-  initGame();
+// Close modal on overlay click
+document.getElementById('winModal')?.addEventListener('click', function(e) {
+  if (e.target === this) hideModal();
+});
+
+init();
+<?php endif; ?>
 </script>
 </body>
 </html>
