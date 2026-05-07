@@ -57,4 +57,4 @@ jobs:
           app-name: 'card-game'
           slot-name: 'Production'
           package: .
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_8972AD1430934910B0EAC0AD0BA72E13 }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_1088E63200C646F7904A92C1C0BDB590 }}
