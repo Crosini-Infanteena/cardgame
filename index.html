@@ -1,45 +1,3 @@
-<?php
-// PHP handles session for score tracking and high scores
-session_start();
-
-if (!isset($_SESSION['high_scores'])) {
-    $_SESSION['high_scores'] = [];
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-    header('Content-Type: application/json');
-
-    if ($_POST['action'] === 'save_score') {
-        $level = htmlspecialchars($_POST['level']);
-        $moves = intval($_POST['moves']);
-        $time  = intval($_POST['time']);
-        $name  = htmlspecialchars($_POST['name'] ?? 'Player');
-
-        if (!isset($_SESSION['high_scores'][$level])) {
-            $_SESSION['high_scores'][$level] = [];
-        }
-
-        $_SESSION['high_scores'][$level][] = [
-            'name'  => $name,
-            'moves' => $moves,
-            'time'  => $time,
-            'date'  => date('Y-m-d H:i')
-        ];
-
-        usort($_SESSION['high_scores'][$level], fn($a, $b) => $a['moves'] - $b['moves']);
-        $_SESSION['high_scores'][$level] = array_slice($_SESSION['high_scores'][$level], 0, 5);
-
-        echo json_encode(['success' => true, 'scores' => $_SESSION['high_scores'][$level]]);
-        exit;
-    }
-
-    if ($_POST['action'] === 'get_scores') {
-        $level = htmlspecialchars($_POST['level']);
-        echo json_encode(['scores' => $_SESSION['high_scores'][$level] ?? []]);
-        exit;
-    }
-}
-?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -58,8 +16,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     --gold:      #ffd700;
     --text:      #e0e8ff;
     --text-dim:  #6070a0;
-    --glow1:     0 0 20px #00f5ff88;
-    --glow2:     0 0 20px #ff006e88;
     --radius:    14px;
   }
 
@@ -74,7 +30,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     position: relative;
   }
 
-  /* Animated starfield bg */
   body::before {
     content: '';
     position: fixed; inset: 0;
@@ -84,8 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
       radial-gradient(1px 1px at 50% 80%, #fff5 0%, transparent 100%),
       radial-gradient(1px 1px at 10% 60%, #fff4 0%, transparent 100%),
       radial-gradient(1px 1px at 90% 70%, #fff6 0%, transparent 100%),
-      radial-gradient(2px 2px at 35% 50%, #00f5ff33 0%, transparent 100%),
-      radial-gradient(2px 2px at 65% 20%, #ff006e22 0%, transparent 100%);
+      radial-gradient(2px 2px at 35% 50%, #00f5ff22 0%, transparent 100%),
+      radial-gradient(2px 2px at 65% 20%, #ff006e18 0%, transparent 100%);
     pointer-events: none;
     z-index: 0;
   }
@@ -98,11 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     padding: 20px 16px 40px;
   }
 
-  /* ── HEADER ── */
-  header {
-    text-align: center;
-    margin-bottom: 28px;
-  }
+  /* HEADER */
+  header { text-align: center; margin-bottom: 28px; }
+
   .logo {
     font-family: 'Orbitron', sans-serif;
     font-size: clamp(2rem, 6vw, 3.4rem);
@@ -112,7 +65,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    text-shadow: none;
     animation: pulse-logo 3s ease-in-out infinite;
   }
   @keyframes pulse-logo {
@@ -127,11 +79,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     margin-top: 4px;
   }
 
-  /* ── SCREEN SYSTEM ── */
+  /* SCREEN SYSTEM */
   .screen { display: none; }
   .screen.active { display: block; }
 
-  /* ── MENU SCREEN ── */
+  /* MENU */
   .menu-box {
     background: linear-gradient(160deg, #0f1535, #0a0a2a);
     border: 1px solid #1e2a5a;
@@ -142,12 +94,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
   }
   .menu-box h2 {
     font-family: 'Orbitron', sans-serif;
-    font-size: 1.3rem;
+    font-size: 1.1rem;
     color: var(--accent1);
     margin-bottom: 8px;
     letter-spacing: .1em;
   }
-  .menu-box p { color: var(--text-dim); margin-bottom: 28px; font-size: .95rem; }
+  .menu-box p { color: var(--text-dim); margin-bottom: 22px; font-size: .9rem; }
 
   .name-input {
     width: 100%; max-width: 340px;
@@ -161,14 +113,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     margin-bottom: 28px;
     outline: none;
     transition: border-color .3s;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
   }
-  .name-input:focus { border-color: var(--accent1); box-shadow: var(--glow1); }
+  .name-input:focus { border-color: var(--accent1); box-shadow: 0 0 16px #00f5ff44; }
 
   .level-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 16px;
-    max-width: 700px;
+    max-width: 720px;
     margin: 0 auto;
   }
 
@@ -182,48 +137,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     position: relative;
     overflow: hidden;
   }
-  .level-card::before {
+  .level-card::after {
     content: '';
     position: absolute; inset: 0;
-    background: linear-gradient(135deg, transparent 60%, #00f5ff0a);
+    background: linear-gradient(135deg, transparent 60%, #ffffff05);
     opacity: 0;
     transition: opacity .3s;
   }
-  .level-card:hover::before { opacity: 1; }
-  .level-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 30px #00f5ff22;
-    border-color: var(--accent1);
-  }
-  .level-card.easy:hover  { border-color: #00ff88; box-shadow: 0 12px 30px #00ff8822; }
-  .level-card.medium:hover{ border-color: var(--gold); box-shadow: 0 12px 30px #ffd70022; }
-  .level-card.hard:hover  { border-color: var(--accent2); box-shadow: 0 12px 30px #ff006e22; }
-  .level-card.expert:hover{ border-color: var(--accent3); box-shadow: 0 12px 30px #7b2fff22; }
+  .level-card:hover::after { opacity: 1; }
+  .level-card:hover { transform: translateY(-5px); }
+  .level-card.easy:hover   { border-color: #00ff88; box-shadow: 0 12px 30px #00ff8830; }
+  .level-card.medium:hover { border-color: var(--gold); box-shadow: 0 12px 30px #ffd70030; }
+  .level-card.hard:hover   { border-color: var(--accent2); box-shadow: 0 12px 30px #ff006e30; }
+  .level-card.expert:hover { border-color: var(--accent3); box-shadow: 0 12px 30px #7b2fff30; }
 
-  .level-icon { font-size: 2.4rem; margin-bottom: 8px; }
+  .level-icon { font-size: 2.6rem; margin-bottom: 8px; }
   .level-title {
     font-family: 'Orbitron', sans-serif;
-    font-size: 1rem;
+    font-size: .95rem;
     font-weight: 700;
-    letter-spacing: .08em;
-    margin-bottom: 6px;
+    letter-spacing: .1em;
+    margin-bottom: 8px;
   }
   .level-card.easy   .level-title { color: #00ff88; }
   .level-card.medium .level-title { color: var(--gold); }
   .level-card.hard   .level-title { color: var(--accent2); }
   .level-card.expert .level-title { color: var(--accent3); }
+  .level-info { color: var(--text-dim); font-size: .78rem; line-height: 1.6; }
 
-  .level-info { color: var(--text-dim); font-size: .8rem; line-height: 1.5; }
-
-  /* ── GAME SCREEN ── */
+  /* GAME SCREEN */
   .game-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: 20px;
+    margin-bottom: 18px;
     flex-wrap: wrap;
   }
+
   .btn-back {
     background: transparent;
     border: 1.5px solid #2a3a7a;
@@ -237,69 +188,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
   }
   .btn-back:hover { border-color: var(--accent1); color: var(--accent1); }
 
-  .stats-bar {
-    display: flex;
-    gap: 20px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
+  .stats-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
   .stat {
     background: #0d1135;
     border: 1px solid #1e2a5a;
     border-radius: 10px;
     padding: 8px 16px;
     text-align: center;
-    min-width: 80px;
+    min-width: 76px;
   }
-  .stat-label { font-size: .65rem; letter-spacing: .15em; text-transform: uppercase; color: var(--text-dim); }
+  .stat-label { font-size: .62rem; letter-spacing: .15em; text-transform: uppercase; color: var(--text-dim); }
   .stat-value {
     font-family: 'Orbitron', sans-serif;
-    font-size: 1.25rem;
+    font-size: 1.2rem;
     font-weight: 700;
     color: var(--accent1);
   }
+  .time-warn { color: var(--accent2) !important; animation: blink .6s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: .4; } }
+
   #level-badge {
     font-family: 'Orbitron', sans-serif;
-    font-size: .75rem;
+    font-size: .72rem;
     padding: 6px 14px;
     border-radius: 20px;
     border: 1.5px solid;
-    letter-spacing: .1em;
+    letter-spacing: .12em;
   }
 
-  /* ── CARD GRID ── */
+  /* PROGRESS BAR */
+  .progress-wrap {
+    background: #0d1135;
+    border-radius: 6px;
+    height: 7px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--accent3), var(--accent1));
+    box-shadow: 0 0 10px var(--accent1);
+    transition: width .4s ease;
+    width: 0%;
+  }
+
+  /* CARD GRID */
   #card-grid {
     display: grid;
     gap: 10px;
     margin: 0 auto;
-    perspective: 1000px;
+    perspective: 1200px;
   }
 
-  /* ── CARD ── */
+  /* CARD */
   .card {
     aspect-ratio: 1;
     cursor: pointer;
     border-radius: 12px;
     transform-style: preserve-3d;
-    transition: transform .45s cubic-bezier(.4, 0, .2, 1);
+    transition: transform .45s cubic-bezier(.4,0,.2,1);
     position: relative;
   }
-  .card.flipped  { transform: rotateY(180deg); }
-  .card.matched  { transform: rotateY(180deg); cursor: default; }
-  .card.matched .card-front { box-shadow: 0 0 18px currentColor; }
-  .card.shake {
-    animation: shake .35s ease;
-  }
-  @keyframes shake {
-    0%,100%{ transform: rotateY(180deg) translateX(0); }
-    25%    { transform: rotateY(180deg) translateX(-6px); }
-    75%    { transform: rotateY(180deg) translateX(6px); }
-  }
-  @keyframes matched-pulse {
-    0%,100%{ transform: rotateY(180deg) scale(1); }
-    50%    { transform: rotateY(180deg) scale(1.05); }
-  }
-  .card.matched { animation: matched-pulse .4s ease; }
+  .card.flipped { transform: rotateY(180deg); }
+  .card.matched { transform: rotateY(180deg); cursor: default; }
 
   .card-face {
     position: absolute; inset: 0;
@@ -310,52 +263,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     justify-content: center;
   }
   .card-back {
-    background: linear-gradient(135deg, #12123a, #0d0d30);
-    border: 1.5px solid #2a3580;
-    font-size: 1.4em;
+    background: linear-gradient(145deg, #141450, #0c0c38);
+    border: 1.5px solid #252585;
   }
-  .card-back::after {
-    content: '?';
+  .card-back-inner {
     font-family: 'Orbitron', sans-serif;
-    font-size: .7em;
-    color: #2a3580;
+    font-size: clamp(.8rem,2.5vw,1.3rem);
+    color: #252585;
     font-weight: 900;
+    user-select: none;
   }
   .card-front {
-    background: linear-gradient(135deg, #0d1440, #10103a);
-    border: 1.5px solid #3a4a9a;
+    background: linear-gradient(145deg, #0f1848, #0a0a36);
+    border: 1.5px solid #2a3580;
     transform: rotateY(180deg);
-    font-size: clamp(1.4rem, 4vw, 2.2rem);
+    font-size: clamp(1.3rem, 3.5vw, 2.2rem);
+  }
+  .card.matched .card-front {
+    border-color: var(--accent1);
+    box-shadow: 0 0 16px #00f5ff55;
+    background: linear-gradient(145deg, #0c2040, #091530);
   }
   .card:hover:not(.flipped):not(.matched) .card-back {
     border-color: var(--accent1);
-    box-shadow: 0 0 12px #00f5ff44;
-    background: linear-gradient(135deg, #16165a, #100d38);
+    box-shadow: 0 0 14px #00f5ff44;
   }
 
-  /* progress bar */
-  .progress-wrap {
-    background: #0d1135;
-    border-radius: 6px;
-    height: 8px;
-    margin-bottom: 16px;
-    overflow: hidden;
+  @keyframes shake {
+    0%,100% { transform: rotateY(180deg) translateX(0); }
+    20%      { transform: rotateY(180deg) translateX(-7px); }
+    60%      { transform: rotateY(180deg) translateX(7px); }
   }
-  .progress-bar {
-    height: 100%;
-    border-radius: 6px;
-    background: linear-gradient(90deg, var(--accent3), var(--accent1));
-    transition: width .4s ease;
-    box-shadow: 0 0 10px var(--accent1);
-    width: 0%;
-  }
+  .card.shake { animation: shake .38s ease; }
 
-  /* ── WIN OVERLAY ── */
+  @keyframes match-pop {
+    0%   { transform: rotateY(180deg) scale(1); }
+    40%  { transform: rotateY(180deg) scale(1.12); }
+    100% { transform: rotateY(180deg) scale(1); }
+  }
+  .card.match-pop { animation: match-pop .35s ease; }
+
+  /* WIN OVERLAY */
   #win-overlay {
     display: none;
     position: fixed; inset: 0;
     background: #000000cc;
-    backdrop-filter: blur(6px);
+    backdrop-filter: blur(8px);
     z-index: 100;
     align-items: center;
     justify-content: center;
@@ -363,45 +316,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
   #win-overlay.show { display: flex; }
 
   .win-box {
-    background: linear-gradient(160deg, #0d1a4a, #080820);
+    background: linear-gradient(160deg, #0d1a50, #080820);
     border: 2px solid var(--accent1);
-    border-radius: 22px;
-    padding: 40px 36px;
+    border-radius: 24px;
+    padding: 40px 32px;
     text-align: center;
-    max-width: 420px;
-    width: 90%;
+    max-width: 440px;
+    width: 92%;
     box-shadow: 0 0 60px #00f5ff33, 0 0 120px #7b2fff18;
     animation: win-pop .5s cubic-bezier(.34,1.56,.64,1);
+    max-height: 90vh;
+    overflow-y: auto;
   }
   @keyframes win-pop {
-    from { transform: scale(.6); opacity: 0; }
+    from { transform: scale(.5); opacity: 0; }
     to   { transform: scale(1);  opacity: 1; }
   }
-  .win-emoji { font-size: 3.5rem; margin-bottom: 10px; }
+
+  .win-emoji { font-size: 3.8rem; margin-bottom: 8px; }
   .win-title {
     font-family: 'Orbitron', sans-serif;
-    font-size: 1.8rem;
+    font-size: 2rem;
     font-weight: 900;
     color: var(--gold);
-    margin-bottom: 6px;
-    text-shadow: 0 0 20px #ffd70088;
+    text-shadow: 0 0 24px #ffd70088;
+    margin-bottom: 4px;
   }
-  .win-sub { color: var(--text-dim); font-size: .9rem; margin-bottom: 24px; }
+  .win-sub { color: var(--text-dim); font-size: .9rem; margin-bottom: 22px; }
+
   .win-stats {
     display: flex;
     gap: 12px;
     justify-content: center;
-    margin-bottom: 28px;
+    margin-bottom: 22px;
   }
   .win-stat {
     background: #0a0a28;
     border: 1px solid #2a3a7a;
-    border-radius: 10px;
-    padding: 12px 20px;
+    border-radius: 12px;
+    padding: 14px 22px;
     flex: 1;
   }
-  .win-stat-label { font-size: .65rem; letter-spacing: .15em; text-transform: uppercase; color: var(--text-dim); }
-  .win-stat-value { font-family: 'Orbitron', sans-serif; font-size: 1.5rem; color: var(--accent1); font-weight: 700; }
+  .win-stat-label { font-size: .62rem; letter-spacing: .15em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
+  .win-stat-value { font-family: 'Orbitron', sans-serif; font-size: 1.6rem; color: var(--accent1); font-weight: 700; }
 
   .btn-primary {
     background: linear-gradient(135deg, var(--accent3), var(--accent1));
@@ -409,45 +366,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     border-radius: 12px;
     color: #fff;
     font-family: 'Orbitron', sans-serif;
-    font-size: .9rem;
+    font-size: .82rem;
     font-weight: 700;
     letter-spacing: .08em;
-    padding: 14px 28px;
+    padding: 13px 22px;
     cursor: pointer;
     transition: transform .2s, box-shadow .2s;
-    margin: 6px;
+    margin: 5px;
   }
-  .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px #00f5ff44;
-  }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 24px #00f5ff44; }
+
   .btn-secondary {
     background: transparent;
     border: 1.5px solid #2a3a7a;
     border-radius: 12px;
     color: var(--text-dim);
     font-family: 'Exo 2', sans-serif;
-    font-size: .9rem;
-    padding: 13px 28px;
+    font-size: .88rem;
+    padding: 12px 22px;
     cursor: pointer;
     transition: all .2s;
-    margin: 6px;
+    margin: 5px;
   }
   .btn-secondary:hover { border-color: var(--accent1); color: var(--accent1); }
 
-  /* ── LEADERBOARD ── */
-  .leaderboard {
-    margin-top: 18px;
-    text-align: left;
-  }
+  /* LEADERBOARD */
+  .lb-wrap { margin-top: 18px; }
   .lb-title {
     font-family: 'Orbitron', sans-serif;
-    font-size: .8rem;
-    letter-spacing: .15em;
-    color: var(--text-dim);
-    text-align: center;
-    margin-bottom: 10px;
+    font-size: .72rem;
+    letter-spacing: .18em;
     text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
   }
   .lb-row {
     display: flex;
@@ -455,84 +406,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     gap: 10px;
     padding: 8px 12px;
     border-radius: 8px;
-    margin-bottom: 4px;
-    background: #080820;
-    font-size: .85rem;
+    background: #0a0a26;
+    border: 1px solid #1a1a40;
+    margin-bottom: 5px;
+    font-size: .82rem;
   }
-  .lb-rank { color: var(--gold); font-family: 'Orbitron', sans-serif; font-size: .8rem; min-width: 22px; }
-  .lb-name { flex: 1; color: var(--text); }
-  .lb-score { color: var(--accent1); font-family: 'Orbitron', sans-serif; font-size: .8rem; }
+  .lb-rank { color: var(--gold); font-family: 'Orbitron', sans-serif; font-size: .75rem; min-width: 24px; }
+  .lb-name { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lb-score { color: var(--accent1); font-family: 'Orbitron', sans-serif; font-size: .75rem; white-space: nowrap; }
 
-  /* ── RESPONSIVE ── */
-  @media(max-width:480px){
-    .game-header { flex-direction: column; align-items: flex-start; }
-    .stats-bar { gap: 8px; }
-    .stat { min-width: 64px; padding: 6px 10px; }
-    .win-box { padding: 28px 20px; }
-  }
-
-  /* ── CONFETTI PARTICLES ── */
+  /* CONFETTI */
   .confetti-piece {
     position: fixed;
-    width: 8px; height: 14px;
+    width: 9px; height: 14px;
     border-radius: 2px;
-    animation: confetti-fall 2.5s ease forwards;
+    animation: cffall linear forwards;
     pointer-events: none;
     z-index: 200;
   }
-  @keyframes confetti-fall {
-    0%   { transform: translateY(-20px) rotate(0deg); opacity: 1; }
-    100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+  @keyframes cffall {
+    0%   { opacity: 1; transform: translateY(-10px) rotate(0deg); }
+    100% { opacity: 0; transform: translateY(100vh) rotate(800deg); }
   }
 
-  /* Flip count warning */
-  .moves-warn { color: var(--accent2) !important; }
+  /* RESPONSIVE */
+  @media(max-width:500px){
+    .game-header { flex-direction: column; align-items: flex-start; }
+    .win-box { padding: 28px 16px; }
+    .win-title { font-size: 1.5rem; }
+  }
 </style>
 </head>
 <body>
-
 <div class="wrapper">
+
   <header>
     <div class="logo">MEMORY MASTER</div>
-    <div class="tagline">Test your mind · Beat the clock</div>
+    <div class="tagline">Test Your Mind · Beat The Clock</div>
   </header>
 
-  <!-- ░░ MENU SCREEN ░░ -->
+  <!-- ══ MENU SCREEN ══ -->
   <div id="screen-menu" class="screen active">
     <div class="menu-box">
-      <h2>ENTER YOUR NAME</h2>
-      <p>Your score will be saved to the leaderboard</p>
-      <input type="text" class="name-input" id="player-name" placeholder="Player One" maxlength="20">
+      <h2>YOUR NAME</h2>
+      <p>Enter your name to appear on the leaderboard</p>
+      <input type="text" id="player-name" class="name-input" placeholder="Player One" maxlength="18">
 
-      <h2 style="margin-bottom:8px;">SELECT LEVEL</h2>
-      <p>Each level adds more cards and less time</p>
+      <h2 style="margin-bottom:8px;">CHOOSE LEVEL</h2>
+      <p>Pick your challenge — harder levels have less time</p>
 
       <div class="level-grid">
         <div class="level-card easy" onclick="startGame('easy')">
           <div class="level-icon">🌱</div>
           <div class="level-title">EASY</div>
-          <div class="level-info">8 cards (4×2)<br>No time limit<br>Perfect for beginners</div>
+          <div class="level-info">8 cards · 4×2<br>No time limit<br>Great for beginners</div>
         </div>
         <div class="level-card medium" onclick="startGame('medium')">
           <div class="level-icon">⚡</div>
           <div class="level-title">MEDIUM</div>
-          <div class="level-info">16 cards (4×4)<br>90 seconds<br>Getting tricky</div>
+          <div class="level-info">16 cards · 4×4<br>90 seconds<br>Stay focused!</div>
         </div>
         <div class="level-card hard" onclick="startGame('hard')">
           <div class="level-icon">🔥</div>
           <div class="level-title">HARD</div>
-          <div class="level-info">24 cards (6×4)<br>75 seconds<br>Focus required</div>
+          <div class="level-info">24 cards · 6×4<br>75 seconds<br>Real challenge</div>
         </div>
         <div class="level-card expert" onclick="startGame('expert')">
           <div class="level-icon">💀</div>
           <div class="level-title">EXPERT</div>
-          <div class="level-info">36 cards (6×6)<br>60 seconds<br>For legends only</div>
+          <div class="level-info">36 cards · 6×6<br>60 seconds<br>Legends only!</div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ░░ GAME SCREEN ░░ -->
+  <!-- ══ GAME SCREEN ══ -->
   <div id="screen-game" class="screen">
     <div class="game-header">
       <button class="btn-back" onclick="goMenu()">← Menu</button>
@@ -554,19 +502,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     </div>
 
     <div class="progress-wrap">
-      <div class="progress-bar" id="progress-bar"></div>
+      <div class="progress-fill" id="progress-fill"></div>
     </div>
 
     <div id="card-grid"></div>
   </div>
+
 </div>
 
-<!-- ░░ WIN OVERLAY ░░ -->
+<!-- ══ WIN / LOSE OVERLAY ══ -->
 <div id="win-overlay">
   <div class="win-box">
     <div class="win-emoji" id="win-emoji">🏆</div>
-    <div class="win-title" id="win-title">YOU WIN!</div>
-    <div class="win-sub" id="win-sub">Amazing memory!</div>
+    <div class="win-title"  id="win-title">YOU WIN!</div>
+    <div class="win-sub"    id="win-sub">Amazing!</div>
     <div class="win-stats">
       <div class="win-stat">
         <div class="win-stat-label">Moves</div>
@@ -577,79 +526,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         <div class="win-stat-value" id="win-time">0s</div>
       </div>
     </div>
-    <div id="leaderboard-section" class="leaderboard"></div>
-    <div style="margin-top:16px;">
-      <button class="btn-primary" id="btn-next-level">Next Level ▶</button>
-      <button class="btn-primary" onclick="restartGame()">Play Again ↺</button>
+    <div id="lb-container"></div>
+    <div style="margin-top:18px;">
+      <button class="btn-primary"   id="btn-next">Next Level ▶</button>
+      <button class="btn-primary"   onclick="restartGame()">Play Again ↺</button>
       <button class="btn-secondary" onclick="goMenu()">Menu</button>
     </div>
   </div>
 </div>
 
 <script>
-// ── EMOJI SETS ──────────────────────────────────────────────
+/* ═══════════════════════════════════════════════
+   CONFIGURATION
+═══════════════════════════════════════════════ */
+const LEVELS = {
+  easy:   { pairs:4,  cols:4, rows:2, timeLimit:0,  label:'EASY',   color:'#00ff88', next:'medium' },
+  medium: { pairs:8,  cols:4, rows:4, timeLimit:90, label:'MEDIUM', color:'#ffd700', next:'hard'   },
+  hard:   { pairs:12, cols:6, rows:4, timeLimit:75, label:'HARD',   color:'#ff006e', next:'expert' },
+  expert: { pairs:18, cols:6, rows:6, timeLimit:60, label:'EXPERT', color:'#7b2fff', next:null     }
+};
+
 const EMOJI_POOL = [
   '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼',
   '🐨','🐯','🦁','🐮','🐷','🐸','🐙','🦋',
   '🌸','🌺','🌻','🌹','🍎','🍊','🍋','🍇',
-  '🎸','🎺','🎹','🎻','⚽','🏀','🎾','🏈',
-  '🚀','🛸','🌙','⭐','🎮','🕹️','💎','🔮'
+  '🎸','🎺','🎹','🥁','⚽','🏀','🎾','🏈',
+  '🚀','🛸','🌙','⭐','🎮','💎','🔮','🧩'
 ];
 
-// ── LEVEL CONFIG ─────────────────────────────────────────────
-const LEVELS = {
-  easy:   { pairs: 4,  cols: 4, timeLimit: 0,  label: 'EASY',   color: '#00ff88', next: 'medium' },
-  medium: { pairs: 8,  cols: 4, timeLimit: 90, label: 'MEDIUM', color: '#ffd700', next: 'hard'   },
-  hard:   { pairs: 12, cols: 6, timeLimit: 75, label: 'HARD',   color: '#ff006e', next: 'expert' },
-  expert: { pairs: 18, cols: 6, timeLimit: 60, label: 'EXPERT', color: '#7b2fff', next: null     }
-};
+const MEDALS = ['🥇','🥈','🥉','4️⃣','5️⃣'];
 
-// ── GAME STATE ───────────────────────────────────────────────
-let state = {
-  level: 'easy',
-  cards: [],
-  flipped: [],
-  matched: 0,
-  moves: 0,
-  startTime: null,
-  elapsed: 0,
-  timerInterval: null,
-  countdownInterval: null,
-  timeLeft: 0,
-  canFlip: true,
-  gameOver: false
-};
+/* ═══════════════════════════════════════════════
+   GAME STATE
+═══════════════════════════════════════════════ */
+let G = {};
 
-// ── UTILS ────────────────────────────────────────────────────
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-function getPlayerName() {
-  return document.getElementById('player-name').value.trim() || 'Player';
-}
-
-// ── SCREEN NAVIGATION ────────────────────────────────────────
-function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-}
-
-function goMenu() {
-  clearTimers();
-  document.getElementById('win-overlay').classList.remove('show');
-  showScreen('screen-menu');
-}
-
-// ── START GAME ───────────────────────────────────────────────
-function startGame(level) {
-  const cfg = LEVELS[level];
-  state = {
+function resetState(level) {
+  G = {
     level,
     cards: [],
     flipped: [],
@@ -657,287 +570,336 @@ function startGame(level) {
     moves: 0,
     startTime: Date.now(),
     elapsed: 0,
-    timerInterval: null,
-    countdownInterval: null,
-    timeLeft: cfg.timeLimit,
+    timeLeft: LEVELS[level].timeLimit,
+    tickTimer: null,
     canFlip: true,
-    gameOver: false
+    done: false
   };
-
-  // Build card data
-  const emojis = shuffle(EMOJI_POOL).slice(0, cfg.pairs);
-  const cardData = shuffle([...emojis, ...emojis]).map((emoji, i) => ({
-    id: i,
-    emoji,
-    flipped: false,
-    matched: false
-  }));
-  state.cards = cardData;
-
-  // Level badge
-  const badge = document.getElementById('level-badge');
-  badge.textContent = cfg.label;
-  badge.style.borderColor = cfg.color;
-  badge.style.color = cfg.color;
-
-  // Stats
-  updateStats();
-  document.getElementById('progress-bar').style.width = '0%';
-
-  // Build grid
-  buildGrid(cfg);
-
-  showScreen('screen-game');
-  startTimers(cfg);
 }
 
+/* ═══════════════════════════════════════════════
+   LEADERBOARD  (localStorage — no PHP needed)
+═══════════════════════════════════════════════ */
+const LS_KEY = 'memoryMaster_scores_v1';
+
+function loadScores() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; }
+  catch(e) { return {}; }
+}
+
+function saveScore(level, name, moves, time) {
+  const all = loadScores();
+  if (!all[level]) all[level] = [];
+  all[level].push({ name, moves, time });
+  all[level].sort((a,b) => a.moves - b.moves || a.time - b.time);
+  all[level] = all[level].slice(0, 5);
+  localStorage.setItem(LS_KEY, JSON.stringify(all));
+  return all[level];
+}
+
+function getScores(level) {
+  return loadScores()[level] || [];
+}
+
+/* ═══════════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════════ */
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length-1; i>0; i--) {
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i],a[j]] = [a[j],a[i]];
+  }
+  return a;
+}
+
+function playerName() {
+  return document.getElementById('player-name').value.trim() || 'Player';
+}
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function stopTimers() {
+  clearInterval(G.tickTimer);
+}
+
+/* ═══════════════════════════════════════════════
+   NAVIGATION
+═══════════════════════════════════════════════ */
+function goMenu() {
+  stopTimers();
+  document.getElementById('win-overlay').classList.remove('show');
+  showScreen('screen-menu');
+}
+
+/* ═══════════════════════════════════════════════
+   START GAME
+═══════════════════════════════════════════════ */
+function startGame(level) {
+  const cfg = LEVELS[level];
+  resetState(level);
+
+  // build shuffled card pairs
+  const emojis = shuffle(EMOJI_POOL).slice(0, cfg.pairs);
+  G.cards = shuffle([...emojis, ...emojis]).map((emoji, i) => ({
+    id: i, emoji, flipped: false, matched: false
+  }));
+
+  // level badge style
+  const badge = document.getElementById('level-badge');
+  badge.textContent = cfg.label;
+  badge.style.color = cfg.color;
+  badge.style.borderColor = cfg.color;
+
+  updateHUD();
+  document.getElementById('progress-fill').style.width = '0%';
+  buildGrid(cfg);
+  showScreen('screen-game');
+  startTick(cfg);
+}
+
+/* ═══════════════════════════════════════════════
+   BUILD CARD GRID
+═══════════════════════════════════════════════ */
 function buildGrid(cfg) {
   const grid = document.getElementById('card-grid');
   grid.innerHTML = '';
-
-  // Dynamic card size
-  const maxW = Math.min(window.innerWidth - 32, 920);
-  const cardSize = Math.floor((maxW - (cfg.cols - 1) * 10) / cfg.cols);
-
   grid.style.gridTemplateColumns = `repeat(${cfg.cols}, 1fr)`;
-  grid.style.maxWidth = maxW + 'px';
 
-  state.cards.forEach(card => {
+  G.cards.forEach(card => {
     const el = document.createElement('div');
     el.className = 'card';
     el.dataset.id = card.id;
     el.innerHTML = `
-      <div class="card-face card-back"></div>
+      <div class="card-face card-back">
+        <span class="card-back-inner">?</span>
+      </div>
       <div class="card-face card-front">${card.emoji}</div>
     `;
-    el.addEventListener('click', () => flipCard(card.id));
+    el.addEventListener('click', () => onCardClick(card.id));
     grid.appendChild(el);
   });
 }
 
-// ── TIMERS ───────────────────────────────────────────────────
-function startTimers(cfg) {
-  clearTimers();
+/* ═══════════════════════════════════════════════
+   TIMER TICK
+═══════════════════════════════════════════════ */
+function startTick(cfg) {
+  stopTimers();
+  G.tickTimer = setInterval(() => {
+    G.elapsed = Math.floor((Date.now() - G.startTime) / 1000);
 
-  // Elapsed timer
-  state.timerInterval = setInterval(() => {
-    state.elapsed = Math.floor((Date.now() - state.startTime) / 1000);
     if (cfg.timeLimit === 0) {
-      document.getElementById('stat-time').textContent = state.elapsed + 's';
-      document.getElementById('stat-time').classList.remove('moves-warn');
+      // free mode — show elapsed
+      const el = document.getElementById('stat-time');
+      el.textContent = G.elapsed + 's';
+      el.classList.remove('time-warn');
+    } else {
+      G.timeLeft = Math.max(0, cfg.timeLimit - G.elapsed);
+      const el = document.getElementById('stat-time');
+      el.textContent = G.timeLeft + 's';
+      el.className = 'stat-value' + (G.timeLeft <= 10 ? ' time-warn' : '');
+      if (G.timeLeft === 0) {
+        stopTimers();
+        triggerTimeUp();
+      }
     }
   }, 500);
-
-  // Countdown timer
-  if (cfg.timeLimit > 0) {
-    state.timeLeft = cfg.timeLimit;
-    updateCountdown();
-    state.countdownInterval = setInterval(() => {
-      state.timeLeft--;
-      updateCountdown();
-      if (state.timeLeft <= 0) {
-        clearTimers();
-        timeUp();
-      }
-    }, 1000);
-  }
 }
 
-function updateCountdown() {
-  const el = document.getElementById('stat-time');
-  el.textContent = state.timeLeft + 's';
-  if (state.timeLeft <= 10) {
-    el.classList.add('moves-warn');
-  } else {
-    el.classList.remove('moves-warn');
-  }
-}
-
-function clearTimers() {
-  clearInterval(state.timerInterval);
-  clearInterval(state.countdownInterval);
-}
-
-function timeUp() {
-  state.gameOver = true;
-  state.canFlip = false;
-  document.getElementById('win-emoji').textContent = '⏰';
-  document.getElementById('win-title').textContent = 'TIME\'S UP!';
-  document.getElementById('win-sub').textContent = `You matched ${state.matched} of ${LEVELS[state.level].pairs} pairs.`;
-  document.getElementById('win-moves').textContent = state.moves;
-  document.getElementById('win-time').textContent = LEVELS[state.level].timeLimit + 's';
-  document.getElementById('btn-next-level').style.display = 'none';
-  document.getElementById('leaderboard-section').innerHTML = '';
-  document.getElementById('win-overlay').classList.add('show');
-}
-
-// ── FLIP CARD ────────────────────────────────────────────────
-function flipCard(id) {
-  if (!state.canFlip || state.gameOver) return;
-
-  const card = state.cards[id];
+/* ═══════════════════════════════════════════════
+   CARD CLICK
+═══════════════════════════════════════════════ */
+function onCardClick(id) {
+  if (!G.canFlip || G.done) return;
+  const card = G.cards[id];
   if (card.flipped || card.matched) return;
-  if (state.flipped.length === 2) return;
+  if (G.flipped.length >= 2) return;
 
+  // flip it
   card.flipped = true;
-  document.querySelector(`.card[data-id="${id}"]`).classList.add('flipped');
-  state.flipped.push(id);
+  cardEl(id).classList.add('flipped');
+  G.flipped.push(id);
 
-  if (state.flipped.length === 2) {
-    state.moves++;
-    updateStats();
-    checkMatch();
+  if (G.flipped.length === 2) {
+    G.moves++;
+    G.canFlip = false;
+    updateHUD();
+    setTimeout(checkPair, 600);
   }
 }
 
-function checkMatch() {
-  state.canFlip = false;
-  const [a, b] = state.flipped;
-  const cardA = state.cards[a];
-  const cardB = state.cards[b];
+/* ═══════════════════════════════════════════════
+   CHECK PAIR
+═══════════════════════════════════════════════ */
+function checkPair() {
+  const [a, b] = G.flipped;
+  const cA = G.cards[a], cB = G.cards[b];
 
-  if (cardA.emoji === cardB.emoji) {
-    // Match!
-    setTimeout(() => {
-      cardA.matched = cardB.matched = true;
-      document.querySelector(`.card[data-id="${a}"]`).classList.add('matched');
-      document.querySelector(`.card[data-id="${b}"]`).classList.add('matched');
-      state.matched++;
-      state.flipped = [];
-      state.canFlip = true;
-      updateStats();
-      updateProgress();
-      if (state.matched === LEVELS[state.level].pairs) {
-        clearTimers();
-        setTimeout(showWin, 400);
-      }
-    }, 400);
+  if (cA.emoji === cB.emoji) {
+    // MATCH
+    cA.matched = cB.matched = true;
+    cardEl(a).classList.add('matched', 'match-pop');
+    cardEl(b).classList.add('matched', 'match-pop');
+    G.matched++;
+    G.flipped = [];
+    G.canFlip = true;
+    updateHUD();
+    updateProgress();
+
+    if (G.matched === LEVELS[G.level].pairs) {
+      stopTimers();
+      G.done = true;
+      setTimeout(triggerWin, 500);
+    }
   } else {
-    // No match
+    // NO MATCH — shake then flip back
+    cardEl(a).classList.add('shake');
+    cardEl(b).classList.add('shake');
     setTimeout(() => {
-      document.querySelector(`.card[data-id="${a}"]`).classList.add('shake');
-      document.querySelector(`.card[data-id="${b}"]`).classList.add('shake');
-      setTimeout(() => {
-        cardA.flipped = cardB.flipped = false;
-        document.querySelector(`.card[data-id="${a}"]`).classList.remove('flipped', 'shake');
-        document.querySelector(`.card[data-id="${b}"]`).classList.remove('flipped', 'shake');
-        state.flipped = [];
-        state.canFlip = true;
-      }, 350);
-    }, 700);
+      cA.flipped = cB.flipped = false;
+      cardEl(a).classList.remove('flipped','shake');
+      cardEl(b).classList.remove('flipped','shake');
+      G.flipped = [];
+      G.canFlip = true;
+    }, 400);
   }
 }
 
-// ── UI UPDATES ───────────────────────────────────────────────
-function updateStats() {
-  const cfg = LEVELS[state.level];
-  document.getElementById('stat-moves').textContent = state.moves;
-  document.getElementById('stat-pairs').textContent = `${state.matched}/${cfg.pairs}`;
+/* ═══════════════════════════════════════════════
+   HUD UPDATES
+═══════════════════════════════════════════════ */
+function updateHUD() {
+  document.getElementById('stat-moves').textContent = G.moves;
+  document.getElementById('stat-pairs').textContent =
+    `${G.matched}/${LEVELS[G.level].pairs}`;
 }
 
 function updateProgress() {
-  const cfg = LEVELS[state.level];
-  const pct = (state.matched / cfg.pairs) * 100;
-  document.getElementById('progress-bar').style.width = pct + '%';
+  const pct = (G.matched / LEVELS[G.level].pairs) * 100;
+  document.getElementById('progress-fill').style.width = pct + '%';
 }
 
-// ── WIN ──────────────────────────────────────────────────────
-function showWin() {
-  const cfg = LEVELS[state.level];
-  const finalTime = cfg.timeLimit > 0
-    ? cfg.timeLimit - state.timeLeft
-    : state.elapsed;
+function cardEl(id) {
+  return document.querySelector(`.card[data-id="${id}"]`);
+}
 
-  const ratings = [
-    { threshold: cfg.pairs * 1.2, emoji: '🏆', title: 'PERFECT!',    sub: 'Extraordinary memory!' },
-    { threshold: cfg.pairs * 1.6, emoji: '🌟', title: 'EXCELLENT!',  sub: 'You\'re a memory master!' },
-    { threshold: cfg.pairs * 2.2, emoji: '👏', title: 'WELL DONE!',  sub: 'Great concentration!' },
-    { threshold: Infinity,         emoji: '😊', title: 'YOU WIN!',    sub: 'Keep practicing!' }
-  ];
-  const rating = ratings.find(r => state.moves <= r.threshold);
+/* ═══════════════════════════════════════════════
+   WIN SCREEN
+═══════════════════════════════════════════════ */
+function triggerWin() {
+  const cfg   = LEVELS[G.level];
+  const time  = cfg.timeLimit > 0 ? cfg.timeLimit - G.timeLeft : G.elapsed;
+  const name  = playerName();
 
-  document.getElementById('win-emoji').textContent = rating.emoji;
-  document.getElementById('win-title').textContent = rating.title;
-  document.getElementById('win-sub').textContent = rating.sub;
-  document.getElementById('win-moves').textContent = state.moves;
-  document.getElementById('win-time').textContent = finalTime + 's';
+  // rating
+  const r = G.moves <= cfg.pairs * 1.2 ? { e:'🏆', t:'PERFECT!',   s:'Extraordinary memory!' }
+          : G.moves <= cfg.pairs * 1.6 ? { e:'🌟', t:'EXCELLENT!', s:"You're a memory master!" }
+          : G.moves <= cfg.pairs * 2.2 ? { e:'👏', t:'WELL DONE!', s:'Great concentration!' }
+          :                               { e:'😊', t:'YOU WIN!',   s:'Keep practising!' };
 
-  const nextBtn = document.getElementById('btn-next-level');
+  document.getElementById('win-emoji').textContent = r.e;
+  document.getElementById('win-title').textContent = r.t;
+  document.getElementById('win-sub').textContent   = r.s;
+  document.getElementById('win-moves').textContent = G.moves;
+  document.getElementById('win-time').textContent  = time + 's';
+
+  // next level button
+  const nb = document.getElementById('btn-next');
   if (cfg.next) {
-    nextBtn.style.display = '';
-    nextBtn.onclick = () => {
+    nb.style.display = '';
+    nb.onclick = () => {
       document.getElementById('win-overlay').classList.remove('show');
       startGame(cfg.next);
     };
   } else {
-    nextBtn.style.display = 'none';
+    nb.style.display = 'none';
   }
 
-  document.getElementById('win-overlay').classList.add('show');
-  launchConfetti();
+  // save & show leaderboard
+  const scores = saveScore(G.level, name, G.moves, time);
+  renderLeaderboard(scores, G.level);
 
-  // Save score via PHP
-  saveScore(state.level, state.moves, finalTime);
+  document.getElementById('win-overlay').classList.add('show');
+  confetti();
 }
 
+/* ═══════════════════════════════════════════════
+   TIME UP SCREEN
+═══════════════════════════════════════════════ */
+function triggerTimeUp() {
+  if (G.done) return;
+  G.done = true;
+  G.canFlip = false;
+
+  const scores = getScores(G.level);
+
+  document.getElementById('win-emoji').textContent = '⏰';
+  document.getElementById('win-title').textContent = "TIME'S UP!";
+  document.getElementById('win-sub').textContent   =
+    `You matched ${G.matched} of ${LEVELS[G.level].pairs} pairs.`;
+  document.getElementById('win-moves').textContent = G.moves;
+  document.getElementById('win-time').textContent  =
+    LEVELS[G.level].timeLimit + 's';
+
+  const nb = document.getElementById('btn-next');
+  nb.style.display = 'none';
+
+  renderLeaderboard(scores, G.level);
+  document.getElementById('win-overlay').classList.add('show');
+}
+
+/* ═══════════════════════════════════════════════
+   LEADERBOARD RENDER
+═══════════════════════════════════════════════ */
+function renderLeaderboard(scores, level) {
+  const c = document.getElementById('lb-container');
+  if (!scores.length) { c.innerHTML = ''; return; }
+
+  c.innerHTML = `
+    <div class="lb-wrap">
+      <div class="lb-title">🏆 Top 5 — ${LEVELS[level].label}</div>
+      ${scores.map((s,i) => `
+        <div class="lb-row">
+          <span class="lb-rank">${MEDALS[i]||i+1}</span>
+          <span class="lb-name">${s.name}</span>
+          <span class="lb-score">${s.moves} moves · ${s.time}s</span>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+/* ═══════════════════════════════════════════════
+   RESTART
+═══════════════════════════════════════════════ */
 function restartGame() {
   document.getElementById('win-overlay').classList.remove('show');
-  startGame(state.level);
+  startGame(G.level);
 }
 
-// ── CONFETTI ─────────────────────────────────────────────────
-function launchConfetti() {
-  const colors = ['#00f5ff','#ff006e','#7b2fff','#ffd700','#00ff88','#fff'];
-  for (let i = 0; i < 60; i++) {
+/* ═══════════════════════════════════════════════
+   CONFETTI
+═══════════════════════════════════════════════ */
+function confetti() {
+  const cols = ['#00f5ff','#ff006e','#7b2fff','#ffd700','#00ff88','#ffffff'];
+  for (let i = 0; i < 70; i++) {
     setTimeout(() => {
       const p = document.createElement('div');
       p.className = 'confetti-piece';
-      p.style.left = Math.random() * 100 + 'vw';
-      p.style.background = colors[Math.floor(Math.random() * colors.length)];
-      p.style.animationDuration = (1.5 + Math.random() * 1.5) + 's';
-      p.style.animationDelay = Math.random() * .5 + 's';
-      p.style.transform = `rotate(${Math.random()*360}deg)`;
+      p.style.cssText = `
+        left:${Math.random()*100}vw;
+        background:${cols[Math.floor(Math.random()*cols.length)]};
+        animation-duration:${1.6 + Math.random()*1.8}s;
+        animation-delay:${Math.random()*.4}s;
+        transform:rotate(${Math.random()*360}deg);
+      `;
       document.body.appendChild(p);
-      setTimeout(() => p.remove(), 3000);
-    }, i * 30);
+      setTimeout(() => p.remove(), 3200);
+    }, i * 25);
   }
-}
-
-// ── PHP SCORE SAVE ───────────────────────────────────────────
-async function saveScore(level, moves, time) {
-  try {
-    const fd = new FormData();
-    fd.append('action', 'save_score');
-    fd.append('level', level);
-    fd.append('moves', moves);
-    fd.append('time', time);
-    fd.append('name', getPlayerName());
-
-    const res = await fetch(window.location.href, { method: 'POST', body: fd });
-    const data = await res.json();
-
-    if (data.success && data.scores.length > 0) {
-      renderLeaderboard(data.scores);
-    }
-  } catch (e) {
-    // Fallback: show without leaderboard if PHP not running
-    document.getElementById('leaderboard-section').innerHTML = '';
-  }
-}
-
-function renderLeaderboard(scores) {
-  const section = document.getElementById('leaderboard-section');
-  if (!scores.length) { section.innerHTML = ''; return; }
-
-  const medals = ['🥇','🥈','🥉','4️⃣','5️⃣'];
-  section.innerHTML = `<div class="lb-title">🏆 Top Scores — ${LEVELS[state.level].label}</div>` +
-    scores.map((s, i) => `
-      <div class="lb-row">
-        <span class="lb-rank">${medals[i]||i+1}</span>
-        <span class="lb-name">${s.name}</span>
-        <span class="lb-score">${s.moves} moves · ${s.time}s</span>
-      </div>
-    `).join('');
 }
 </script>
 </body>
