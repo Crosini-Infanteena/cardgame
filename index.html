@@ -1,897 +1,944 @@
 <?php
+// PHP handles session for score tracking and high scores
 session_start();
 
-// ─── USER DATABASE (stored in session for demo; works without a real DB) ───
-if (!isset($_SESSION['users'])) {
-    $_SESSION['users'] = [
-        'demo' => password_hash('demo123', PASSWORD_DEFAULT)
-    ];
+if (!isset($_SESSION['high_scores'])) {
+    $_SESSION['high_scores'] = [];
 }
 
-$message = '';
-$message_type = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    header('Content-Type: application/json');
 
-// ─── HANDLE REGISTER ───────────────────────────────────────────────────────
-if (isset($_POST['action']) && $_POST['action'] === 'register') {
-    $u = trim($_POST['username'] ?? '');
-    $p = $_POST['password'] ?? '';
-    $c = $_POST['confirm'] ?? '';
-    if (strlen($u) < 3) {
-        $message = 'Username must be at least 3 characters.';
-        $message_type = 'error';
-    } elseif (strlen($p) < 6) {
-        $message = 'Password must be at least 6 characters.';
-        $message_type = 'error';
-    } elseif ($p !== $c) {
-        $message = 'Passwords do not match.';
-        $message_type = 'error';
-    } elseif (isset($_SESSION['users'][$u])) {
-        $message = 'Username already exists.';
-        $message_type = 'error';
-    } else {
-        $_SESSION['users'][$u] = password_hash($p, PASSWORD_DEFAULT);
-        $message = 'Account created! Please log in.';
-        $message_type = 'success';
-    }
-}
+    if ($_POST['action'] === 'save_score') {
+        $level = htmlspecialchars($_POST['level']);
+        $moves = intval($_POST['moves']);
+        $time  = intval($_POST['time']);
+        $name  = htmlspecialchars($_POST['name'] ?? 'Player');
 
-// ─── HANDLE LOGIN ──────────────────────────────────────────────────────────
-if (isset($_POST['action']) && $_POST['action'] === 'login') {
-    $u = trim($_POST['username'] ?? '');
-    $p = $_POST['password'] ?? '';
-    if (isset($_SESSION['users'][$u]) && password_verify($p, $_SESSION['users'][$u])) {
-        $_SESSION['logged_in'] = true;
-        $_SESSION['username'] = $u;
-        if (!isset($_SESSION['scores'][$u])) {
-            $_SESSION['scores'][$u] = ['level' => 1, 'best' => []];
+        if (!isset($_SESSION['high_scores'][$level])) {
+            $_SESSION['high_scores'][$level] = [];
         }
-    } else {
-        $message = 'Invalid username or password.';
-        $message_type = 'error';
+
+        $_SESSION['high_scores'][$level][] = [
+            'name'  => $name,
+            'moves' => $moves,
+            'time'  => $time,
+            'date'  => date('Y-m-d H:i')
+        ];
+
+        usort($_SESSION['high_scores'][$level], fn($a, $b) => $a['moves'] - $b['moves']);
+        $_SESSION['high_scores'][$level] = array_slice($_SESSION['high_scores'][$level], 0, 5);
+
+        echo json_encode(['success' => true, 'scores' => $_SESSION['high_scores'][$level]]);
+        exit;
+    }
+
+    if ($_POST['action'] === 'get_scores') {
+        $level = htmlspecialchars($_POST['level']);
+        echo json_encode(['scores' => $_SESSION['high_scores'][$level] ?? []]);
+        exit;
     }
 }
-
-// ─── HANDLE LOGOUT ─────────────────────────────────────────────────────────
-if (isset($_GET['logout'])) {
-    $_SESSION['logged_in'] = false;
-    $_SESSION['username'] = '';
-    header('Location: ' . $_SERVER['PHP_SELF']);
-    exit;
-}
-
-// ─── HANDLE SCORE SAVE (AJAX) ──────────────────────────────────────────────
-if (isset($_POST['action']) && $_POST['action'] === 'save_score' && $_SESSION['logged_in']) {
-    $level = intval($_POST['level'] ?? 1);
-    $moves = intval($_POST['moves'] ?? 999);
-    $time  = intval($_POST['time'] ?? 999);
-    $u = $_SESSION['username'];
-    $key = 'level_' . $level;
-    $current_best = $_SESSION['scores'][$u]['best'][$key] ?? null;
-    if ($current_best === null || $moves < $current_best['moves'] || ($moves === $current_best['moves'] && $time < $current_best['time'])) {
-        $_SESSION['scores'][$u]['best'][$key] = ['moves' => $moves, 'time' => $time];
-    }
-    if ($level >= ($_SESSION['scores'][$u]['level'] ?? 1)) {
-        $_SESSION['scores'][$u]['level'] = min($level + 1, 5);
-    }
-    echo json_encode(['ok' => true, 'unlocked_level' => $_SESSION['scores'][$u]['level']]);
-    exit;
-}
-
-// ─── HANDLE GET SCORES (AJAX) ──────────────────────────────────────────────
-if (isset($_GET['get_scores']) && $_SESSION['logged_in']) {
-    $u = $_SESSION['username'];
-    echo json_encode($_SESSION['scores'][$u] ?? ['level' => 1, 'best' => []]);
-    exit;
-}
-
-$loggedIn = $_SESSION['logged_in'] ?? false;
-$username = $_SESSION['username'] ?? '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MemoryQuest – Card Game</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<title>Memory Master — Card Flip Game</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@300;400;600&display=swap" rel="stylesheet">
 <style>
-/* ─── RESET & BASE ────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg:        #03050f;
-  --bg2:       #070d1f;
-  --surface:   #0d1630;
-  --border:    #1a2a5e;
-  --accent:    #00d4ff;
-  --accent2:   #ff3cac;
-  --accent3:   #7b2fff;
-  --gold:      #ffd700;
-  --text:      #c8d8ff;
-  --text-dim:  #5a72b0;
-  --card-back: linear-gradient(135deg, #0d1630 0%, #1a2a5e 50%, #0d1630 100%);
-  --success:   #00ff88;
-  --error:     #ff4455;
-  --radius:    12px;
-  --glow:      0 0 20px rgba(0,212,255,0.4);
-}
-html { scroll-behavior: smooth; }
-body {
-  font-family: 'Exo 2', sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  overflow-x: hidden;
-}
+  :root {
+    --bg:        #0a0a1a;
+    --surface:   #0f0f2e;
+    --card-back: #12123a;
+    --accent1:   #00f5ff;
+    --accent2:   #ff006e;
+    --accent3:   #7b2fff;
+    --gold:      #ffd700;
+    --text:      #e0e8ff;
+    --text-dim:  #6070a0;
+    --glow1:     0 0 20px #00f5ff88;
+    --glow2:     0 0 20px #ff006e88;
+    --radius:    14px;
+  }
 
-/* ─── ANIMATED BACKGROUND ────────────────────────── */
-.bg-stars {
-  position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background:
-    radial-gradient(ellipse at 20% 20%, rgba(123,47,255,0.08) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(0,212,255,0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(255,60,172,0.04) 0%, transparent 60%);
-}
-.bg-stars::after {
-  content: '';
-  position: absolute; inset: 0;
-  background-image:
-    radial-gradient(1px 1px at 10% 15%, rgba(255,255,255,0.5) 0%, transparent 100%),
-    radial-gradient(1px 1px at 30% 45%, rgba(255,255,255,0.3) 0%, transparent 100%),
-    radial-gradient(1px 1px at 60% 25%, rgba(255,255,255,0.4) 0%, transparent 100%),
-    radial-gradient(1px 1px at 80% 70%, rgba(255,255,255,0.3) 0%, transparent 100%),
-    radial-gradient(1px 1px at 45% 80%, rgba(255,255,255,0.5) 0%, transparent 100%),
-    radial-gradient(1px 1px at 90% 10%, rgba(255,255,255,0.4) 0%, transparent 100%),
-    radial-gradient(1px 1px at 5% 90%, rgba(255,255,255,0.3) 0%, transparent 100%),
-    radial-gradient(1px 1px at 70% 55%, rgba(255,255,255,0.2) 0%, transparent 100%);
-  animation: twinkle 4s ease-in-out infinite alternate;
-}
-@keyframes twinkle { from { opacity: 0.6; } to { opacity: 1; } }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* ─── LAYOUT ─────────────────────────────────────── */
-.wrapper {
-  position: relative; z-index: 1;
-  min-height: 100vh;
-  display: flex; flex-direction: column; align-items: center;
-  padding: 20px 16px 40px;
-}
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Exo 2', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+  }
 
-/* ─── HEADER ─────────────────────────────────────── */
-header {
-  width: 100%; max-width: 900px;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 24px;
-  background: rgba(13,22,48,0.8);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  backdrop-filter: blur(12px);
-  margin-bottom: 32px;
-}
-.logo {
-  font-family: 'Orbitron', monospace;
-  font-weight: 900; font-size: 1.4rem;
-  background: linear-gradient(90deg, var(--accent), var(--accent2));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  letter-spacing: 2px;
-}
-.header-user {
-  display: flex; align-items: center; gap: 12px;
-  font-size: 0.85rem; color: var(--text-dim);
-}
-.header-user strong { color: var(--accent); }
-.btn-logout {
-  background: transparent; border: 1px solid var(--error);
-  color: var(--error); padding: 6px 14px; border-radius: 6px;
-  cursor: pointer; font-family: 'Exo 2', sans-serif; font-size: 0.8rem;
-  transition: all 0.2s;
-}
-.btn-logout:hover { background: var(--error); color: #fff; }
+  /* Animated starfield bg */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 20% 30%, #fff8 0%, transparent 100%),
+      radial-gradient(1px 1px at 80% 10%, #fff6 0%, transparent 100%),
+      radial-gradient(1px 1px at 50% 80%, #fff5 0%, transparent 100%),
+      radial-gradient(1px 1px at 10% 60%, #fff4 0%, transparent 100%),
+      radial-gradient(1px 1px at 90% 70%, #fff6 0%, transparent 100%),
+      radial-gradient(2px 2px at 35% 50%, #00f5ff33 0%, transparent 100%),
+      radial-gradient(2px 2px at 65% 20%, #ff006e22 0%, transparent 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
 
-/* ─── AUTH SCREENS ───────────────────────────────── */
-.auth-container {
-  width: 100%; max-width: 420px;
-  animation: fadeUp 0.5s ease both;
-}
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(30px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.auth-card {
-  background: rgba(13,22,48,0.9);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 40px 36px;
-  backdrop-filter: blur(20px);
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
-}
-.auth-title {
-  font-family: 'Orbitron', monospace;
-  font-size: 1.8rem; font-weight: 900; text-align: center;
-  background: linear-gradient(135deg, var(--accent), var(--accent3));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  margin-bottom: 8px;
-}
-.auth-subtitle {
-  text-align: center; color: var(--text-dim); font-size: 0.85rem;
-  margin-bottom: 28px;
-}
-.form-group { margin-bottom: 18px; }
-.form-group label {
-  display: block; font-size: 0.78rem; font-weight: 600;
-  color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;
-  margin-bottom: 6px;
-}
-.form-group input {
-  width: 100%; padding: 12px 16px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid var(--border);
-  border-radius: 8px; color: var(--text);
-  font-family: 'Exo 2', sans-serif; font-size: 0.95rem;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  outline: none;
-}
-.form-group input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(0,212,255,0.12);
-}
-.btn-primary {
-  width: 100%; padding: 14px;
-  background: linear-gradient(135deg, var(--accent3), var(--accent));
-  border: none; border-radius: 10px; color: #fff;
-  font-family: 'Orbitron', monospace; font-size: 0.9rem; font-weight: 700;
-  letter-spacing: 1px; cursor: pointer; text-transform: uppercase;
-  transition: all 0.25s; box-shadow: 0 4px 20px rgba(0,212,255,0.25);
-  margin-top: 8px;
-}
-.btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 30px rgba(0,212,255,0.4);
-}
-.btn-primary:active { transform: translateY(0); }
-.auth-switch {
-  text-align: center; margin-top: 20px;
-  font-size: 0.85rem; color: var(--text-dim);
-}
-.auth-switch a {
-  color: var(--accent); text-decoration: none; font-weight: 600;
-  cursor: pointer;
-}
-.auth-switch a:hover { text-decoration: underline; }
-.msg {
-  padding: 10px 14px; border-radius: 8px;
-  font-size: 0.85rem; margin-bottom: 18px; text-align: center;
-}
-.msg.error   { background: rgba(255,68,85,0.15); border: 1px solid var(--error); color: var(--error); }
-.msg.success { background: rgba(0,255,136,0.1); border: 1px solid var(--success); color: var(--success); }
+  .wrapper {
+    position: relative;
+    z-index: 1;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 20px 16px 40px;
+  }
 
-/* ─── GAME SCREEN ────────────────────────────────── */
-.game-container {
-  width: 100%; max-width: 900px;
-  animation: fadeUp 0.4s ease both;
-}
+  /* ── HEADER ── */
+  header {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .logo {
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(2rem, 6vw, 3.4rem);
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    background: linear-gradient(135deg, var(--accent1), var(--accent3), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+    animation: pulse-logo 3s ease-in-out infinite;
+  }
+  @keyframes pulse-logo {
+    0%,100% { filter: drop-shadow(0 0 8px #00f5ff88); }
+    50%      { filter: drop-shadow(0 0 22px #7b2fff88); }
+  }
+  .tagline {
+    color: var(--text-dim);
+    font-size: .9rem;
+    letter-spacing: .2em;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
 
-/* ─── LEVEL SELECT ───────────────────────────────── */
-.screen { display: none; }
-.screen.active { display: block; }
+  /* ── SCREEN SYSTEM ── */
+  .screen { display: none; }
+  .screen.active { display: block; }
 
-.level-title {
-  font-family: 'Orbitron', monospace;
-  font-size: 1.6rem; font-weight: 900; text-align: center;
-  color: var(--accent); margin-bottom: 8px;
-}
-.level-subtitle {
-  text-align: center; color: var(--text-dim); margin-bottom: 32px; font-size: 0.9rem;
-}
-.levels-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 16px; margin-bottom: 24px;
-}
-.level-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px; padding: 24px 16px;
-  text-align: center; cursor: pointer;
-  transition: all 0.25s; position: relative; overflow: hidden;
-}
-.level-card::before {
-  content: '';
-  position: absolute; inset: 0;
-  background: linear-gradient(135deg, transparent, rgba(0,212,255,0.03));
-  opacity: 0; transition: opacity 0.25s;
-}
-.level-card:hover::before { opacity: 1; }
-.level-card.unlocked:hover {
-  border-color: var(--accent);
-  transform: translateY(-4px);
-  box-shadow: var(--glow);
-}
-.level-card.locked {
-  opacity: 0.4; cursor: not-allowed;
-}
-.level-card.locked:hover { transform: none; box-shadow: none; }
-.level-icon { font-size: 2.2rem; margin-bottom: 8px; }
-.level-name {
-  font-family: 'Orbitron', monospace; font-size: 0.8rem; font-weight: 700;
-  color: var(--accent); letter-spacing: 1px; margin-bottom: 4px;
-}
-.level-info { font-size: 0.75rem; color: var(--text-dim); }
-.level-best { font-size: 0.72rem; color: var(--gold); margin-top: 6px; }
-.level-lock { font-size: 1rem; position: absolute; top: 10px; right: 10px; }
+  /* ── MENU SCREEN ── */
+  .menu-box {
+    background: linear-gradient(160deg, #0f1535, #0a0a2a);
+    border: 1px solid #1e2a5a;
+    border-radius: 20px;
+    padding: 36px 28px;
+    text-align: center;
+    box-shadow: 0 8px 40px #00f5ff18;
+  }
+  .menu-box h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.3rem;
+    color: var(--accent1);
+    margin-bottom: 8px;
+    letter-spacing: .1em;
+  }
+  .menu-box p { color: var(--text-dim); margin-bottom: 28px; font-size: .95rem; }
 
-/* ─── GAME BOARD ─────────────────────────────────── */
-.game-header {
-  display: flex; align-items: center; justify-content: space-between;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 14px 20px; margin-bottom: 20px;
-}
-.game-stat {
-  text-align: center;
-}
-.game-stat .label {
-  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 1px;
-  color: var(--text-dim); margin-bottom: 2px;
-}
-.game-stat .value {
-  font-family: 'Orbitron', monospace; font-size: 1.1rem; font-weight: 700;
-  color: var(--accent);
-}
-.btn-back {
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text-dim); padding: 8px 16px; border-radius: 8px;
-  cursor: pointer; font-family: 'Exo 2', sans-serif; font-size: 0.82rem;
-  transition: all 0.2s;
-}
-.btn-back:hover { border-color: var(--accent); color: var(--accent); }
+  .name-input {
+    width: 100%; max-width: 340px;
+    background: #080820;
+    border: 1.5px solid #2a3a7a;
+    border-radius: 10px;
+    color: var(--text);
+    font-family: 'Exo 2', sans-serif;
+    font-size: 1rem;
+    padding: 12px 16px;
+    margin-bottom: 28px;
+    outline: none;
+    transition: border-color .3s;
+  }
+  .name-input:focus { border-color: var(--accent1); box-shadow: var(--glow1); }
 
-.card-grid {
-  display: grid; gap: 10px;
-  justify-content: center; margin-bottom: 20px;
-}
-/* grid columns set dynamically by JS */
+  .level-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    max-width: 700px;
+    margin: 0 auto;
+  }
 
-/* ─── CARD ───────────────────────────────────────── */
-.card {
-  aspect-ratio: 1;
-  perspective: 600px;
-  cursor: pointer;
-}
-.card-inner {
-  width: 100%; height: 100%;
-  position: relative;
-  transform-style: preserve-3d;
-  transition: transform 0.45s cubic-bezier(0.4,0,0.2,1);
-}
-.card.flipped .card-inner   { transform: rotateY(180deg); }
-.card.matched .card-inner   { transform: rotateY(180deg); }
-.card.matched .card-front   { border-color: var(--success); box-shadow: 0 0 16px rgba(0,255,136,0.4); }
-.card-front, .card-back {
-  position: absolute; inset: 0;
-  backface-visibility: hidden;
-  border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 2rem;
-}
-.card-back {
-  background: var(--card-back);
-  border: 1px solid var(--border);
-  overflow: hidden;
-}
-.card-back::after {
-  content: '?';
-  font-family: 'Orbitron', monospace; font-weight: 900;
-  font-size: 1.4rem; color: var(--border);
-}
-.card-front {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  transform: rotateY(180deg);
-  user-select: none;
-}
-.card:not(.matched):not(.flipped):hover .card-back {
-  border-color: var(--accent);
-  box-shadow: 0 0 12px rgba(0,212,255,0.25);
-}
-.card.shake .card-inner {
-  animation: shake 0.4s ease;
-}
-@keyframes shake {
-  0%,100% { transform: rotateY(180deg) translateX(0); }
-  20%      { transform: rotateY(180deg) translateX(-5px); }
-  60%      { transform: rotateY(180deg) translateX(5px); }
-}
-.card.pop .card-front {
-  animation: pop 0.3s ease;
-}
-@keyframes pop {
-  0%   { transform: rotateY(180deg) scale(1); }
-  50%  { transform: rotateY(180deg) scale(1.15); }
-  100% { transform: rotateY(180deg) scale(1); }
-}
+  .level-card {
+    background: linear-gradient(145deg, #0d1440, #080820);
+    border: 1.5px solid #1e2a5a;
+    border-radius: var(--radius);
+    padding: 22px 16px;
+    cursor: pointer;
+    transition: transform .25s, box-shadow .25s, border-color .25s;
+    position: relative;
+    overflow: hidden;
+  }
+  .level-card::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, transparent 60%, #00f5ff0a);
+    opacity: 0;
+    transition: opacity .3s;
+  }
+  .level-card:hover::before { opacity: 1; }
+  .level-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 30px #00f5ff22;
+    border-color: var(--accent1);
+  }
+  .level-card.easy:hover  { border-color: #00ff88; box-shadow: 0 12px 30px #00ff8822; }
+  .level-card.medium:hover{ border-color: var(--gold); box-shadow: 0 12px 30px #ffd70022; }
+  .level-card.hard:hover  { border-color: var(--accent2); box-shadow: 0 12px 30px #ff006e22; }
+  .level-card.expert:hover{ border-color: var(--accent3); box-shadow: 0 12px 30px #7b2fff22; }
 
-/* ─── MODAL ──────────────────────────────────────── */
-.modal-overlay {
-  position: fixed; inset: 0; z-index: 100;
-  background: rgba(0,0,0,0.75);
-  display: flex; align-items: center; justify-content: center;
-  opacity: 0; pointer-events: none;
-  transition: opacity 0.3s;
-  backdrop-filter: blur(6px);
-}
-.modal-overlay.show { opacity: 1; pointer-events: all; }
-.modal {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 20px; padding: 40px 36px;
-  text-align: center; max-width: 380px; width: 90%;
-  transform: scale(0.85); transition: transform 0.3s;
-  box-shadow: 0 30px 80px rgba(0,0,0,0.6);
-}
-.modal-overlay.show .modal { transform: scale(1); }
-.modal-icon  { font-size: 3.5rem; margin-bottom: 12px; }
-.modal-title {
-  font-family: 'Orbitron', monospace; font-size: 1.4rem; font-weight: 900;
-  margin-bottom: 8px;
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-}
-.modal-stats {
-  display: flex; justify-content: center; gap: 24px;
-  margin: 18px 0;
-}
-.mstat { text-align: center; }
-.mstat .ml { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
-.mstat .mv { font-family: 'Orbitron', monospace; font-size: 1.3rem; color: var(--gold); }
-.modal-msg { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 20px; }
-.modal-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
-.btn-modal {
-  padding: 11px 22px; border-radius: 10px;
-  font-family: 'Orbitron', monospace; font-size: 0.78rem; font-weight: 700;
-  letter-spacing: 1px; cursor: pointer; border: none; text-transform: uppercase;
-  transition: all 0.2s;
-}
-.btn-modal.primary {
-  background: linear-gradient(135deg, var(--accent3), var(--accent));
-  color: #fff; box-shadow: 0 4px 16px rgba(0,212,255,0.3);
-}
-.btn-modal.primary:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,212,255,0.45); }
-.btn-modal.secondary {
-  background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-}
-.btn-modal.secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .level-icon { font-size: 2.4rem; margin-bottom: 8px; }
+  .level-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    margin-bottom: 6px;
+  }
+  .level-card.easy   .level-title { color: #00ff88; }
+  .level-card.medium .level-title { color: var(--gold); }
+  .level-card.hard   .level-title { color: var(--accent2); }
+  .level-card.expert .level-title { color: var(--accent3); }
 
-/* ─── PROGRESS BAR ───────────────────────────────── */
-.progress-bar {
-  height: 4px; background: var(--border); border-radius: 2px;
-  margin-bottom: 20px; overflow: hidden;
-}
-.progress-fill {
-  height: 100%; border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent3), var(--accent));
-  transition: width 0.4s ease;
-}
+  .level-info { color: var(--text-dim); font-size: .8rem; line-height: 1.5; }
 
-/* ─── CONFETTI ───────────────────────────────────── */
-.confetti-piece {
-  position: fixed; width: 8px; height: 8px; z-index: 200;
-  pointer-events: none; border-radius: 2px;
-  animation: confettiFall linear forwards;
-}
-@keyframes confettiFall {
-  0%   { opacity: 1; transform: translateY(-20px) rotate(0deg); }
-  100% { opacity: 0; transform: translateY(100vh) rotate(720deg); }
-}
+  /* ── GAME SCREEN ── */
+  .game-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .btn-back {
+    background: transparent;
+    border: 1.5px solid #2a3a7a;
+    color: var(--text-dim);
+    font-family: 'Exo 2', sans-serif;
+    font-size: .9rem;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all .2s;
+  }
+  .btn-back:hover { border-color: var(--accent1); color: var(--accent1); }
 
-/* ─── RESPONSIVE ─────────────────────────────────── */
-@media (max-width: 500px) {
-  .auth-card { padding: 28px 20px; }
-  .levels-grid { grid-template-columns: repeat(2, 1fr); }
-  .card-grid { gap: 7px; }
-  .game-header { flex-wrap: wrap; gap: 8px; }
-}
+  .stats-bar {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .stat {
+    background: #0d1135;
+    border: 1px solid #1e2a5a;
+    border-radius: 10px;
+    padding: 8px 16px;
+    text-align: center;
+    min-width: 80px;
+  }
+  .stat-label { font-size: .65rem; letter-spacing: .15em; text-transform: uppercase; color: var(--text-dim); }
+  .stat-value {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--accent1);
+  }
+  #level-badge {
+    font-family: 'Orbitron', sans-serif;
+    font-size: .75rem;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1.5px solid;
+    letter-spacing: .1em;
+  }
+
+  /* ── CARD GRID ── */
+  #card-grid {
+    display: grid;
+    gap: 10px;
+    margin: 0 auto;
+    perspective: 1000px;
+  }
+
+  /* ── CARD ── */
+  .card {
+    aspect-ratio: 1;
+    cursor: pointer;
+    border-radius: 12px;
+    transform-style: preserve-3d;
+    transition: transform .45s cubic-bezier(.4, 0, .2, 1);
+    position: relative;
+  }
+  .card.flipped  { transform: rotateY(180deg); }
+  .card.matched  { transform: rotateY(180deg); cursor: default; }
+  .card.matched .card-front { box-shadow: 0 0 18px currentColor; }
+  .card.shake {
+    animation: shake .35s ease;
+  }
+  @keyframes shake {
+    0%,100%{ transform: rotateY(180deg) translateX(0); }
+    25%    { transform: rotateY(180deg) translateX(-6px); }
+    75%    { transform: rotateY(180deg) translateX(6px); }
+  }
+  @keyframes matched-pulse {
+    0%,100%{ transform: rotateY(180deg) scale(1); }
+    50%    { transform: rotateY(180deg) scale(1.05); }
+  }
+  .card.matched { animation: matched-pulse .4s ease; }
+
+  .card-face {
+    position: absolute; inset: 0;
+    border-radius: 12px;
+    backface-visibility: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .card-back {
+    background: linear-gradient(135deg, #12123a, #0d0d30);
+    border: 1.5px solid #2a3580;
+    font-size: 1.4em;
+  }
+  .card-back::after {
+    content: '?';
+    font-family: 'Orbitron', sans-serif;
+    font-size: .7em;
+    color: #2a3580;
+    font-weight: 900;
+  }
+  .card-front {
+    background: linear-gradient(135deg, #0d1440, #10103a);
+    border: 1.5px solid #3a4a9a;
+    transform: rotateY(180deg);
+    font-size: clamp(1.4rem, 4vw, 2.2rem);
+  }
+  .card:hover:not(.flipped):not(.matched) .card-back {
+    border-color: var(--accent1);
+    box-shadow: 0 0 12px #00f5ff44;
+    background: linear-gradient(135deg, #16165a, #100d38);
+  }
+
+  /* progress bar */
+  .progress-wrap {
+    background: #0d1135;
+    border-radius: 6px;
+    height: 8px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--accent3), var(--accent1));
+    transition: width .4s ease;
+    box-shadow: 0 0 10px var(--accent1);
+    width: 0%;
+  }
+
+  /* ── WIN OVERLAY ── */
+  #win-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: #000000cc;
+    backdrop-filter: blur(6px);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  #win-overlay.show { display: flex; }
+
+  .win-box {
+    background: linear-gradient(160deg, #0d1a4a, #080820);
+    border: 2px solid var(--accent1);
+    border-radius: 22px;
+    padding: 40px 36px;
+    text-align: center;
+    max-width: 420px;
+    width: 90%;
+    box-shadow: 0 0 60px #00f5ff33, 0 0 120px #7b2fff18;
+    animation: win-pop .5s cubic-bezier(.34,1.56,.64,1);
+  }
+  @keyframes win-pop {
+    from { transform: scale(.6); opacity: 0; }
+    to   { transform: scale(1);  opacity: 1; }
+  }
+  .win-emoji { font-size: 3.5rem; margin-bottom: 10px; }
+  .win-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.8rem;
+    font-weight: 900;
+    color: var(--gold);
+    margin-bottom: 6px;
+    text-shadow: 0 0 20px #ffd70088;
+  }
+  .win-sub { color: var(--text-dim); font-size: .9rem; margin-bottom: 24px; }
+  .win-stats {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 28px;
+  }
+  .win-stat {
+    background: #0a0a28;
+    border: 1px solid #2a3a7a;
+    border-radius: 10px;
+    padding: 12px 20px;
+    flex: 1;
+  }
+  .win-stat-label { font-size: .65rem; letter-spacing: .15em; text-transform: uppercase; color: var(--text-dim); }
+  .win-stat-value { font-family: 'Orbitron', sans-serif; font-size: 1.5rem; color: var(--accent1); font-weight: 700; }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent3), var(--accent1));
+    border: none;
+    border-radius: 12px;
+    color: #fff;
+    font-family: 'Orbitron', sans-serif;
+    font-size: .9rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    padding: 14px 28px;
+    cursor: pointer;
+    transition: transform .2s, box-shadow .2s;
+    margin: 6px;
+  }
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px #00f5ff44;
+  }
+  .btn-secondary {
+    background: transparent;
+    border: 1.5px solid #2a3a7a;
+    border-radius: 12px;
+    color: var(--text-dim);
+    font-family: 'Exo 2', sans-serif;
+    font-size: .9rem;
+    padding: 13px 28px;
+    cursor: pointer;
+    transition: all .2s;
+    margin: 6px;
+  }
+  .btn-secondary:hover { border-color: var(--accent1); color: var(--accent1); }
+
+  /* ── LEADERBOARD ── */
+  .leaderboard {
+    margin-top: 18px;
+    text-align: left;
+  }
+  .lb-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: .8rem;
+    letter-spacing: .15em;
+    color: var(--text-dim);
+    text-align: center;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+  }
+  .lb-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    background: #080820;
+    font-size: .85rem;
+  }
+  .lb-rank { color: var(--gold); font-family: 'Orbitron', sans-serif; font-size: .8rem; min-width: 22px; }
+  .lb-name { flex: 1; color: var(--text); }
+  .lb-score { color: var(--accent1); font-family: 'Orbitron', sans-serif; font-size: .8rem; }
+
+  /* ── RESPONSIVE ── */
+  @media(max-width:480px){
+    .game-header { flex-direction: column; align-items: flex-start; }
+    .stats-bar { gap: 8px; }
+    .stat { min-width: 64px; padding: 6px 10px; }
+    .win-box { padding: 28px 20px; }
+  }
+
+  /* ── CONFETTI PARTICLES ── */
+  .confetti-piece {
+    position: fixed;
+    width: 8px; height: 14px;
+    border-radius: 2px;
+    animation: confetti-fall 2.5s ease forwards;
+    pointer-events: none;
+    z-index: 200;
+  }
+  @keyframes confetti-fall {
+    0%   { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+  }
+
+  /* Flip count warning */
+  .moves-warn { color: var(--accent2) !important; }
 </style>
 </head>
 <body>
-<div class="bg-stars"></div>
-<div class="wrapper">
 
-  <!-- ─── HEADER ─────────────────────────────────── -->
+<div class="wrapper">
   <header>
-    <div class="logo">⚡ MemoryQuest</div>
-    <?php if ($loggedIn): ?>
-    <div class="header-user">
-      <span>Welcome, <strong><?= htmlspecialchars($username) ?></strong></span>
-      <a href="?logout=1"><button class="btn-logout">Logout</button></a>
-    </div>
-    <?php else: ?>
-    <div class="header-user">Card Memory Game</div>
-    <?php endif; ?>
+    <div class="logo">MEMORY MASTER</div>
+    <div class="tagline">Test your mind · Beat the clock</div>
   </header>
 
-  <!-- ════════════════════════════════════════════ -->
-  <!-- ─── AUTH SECTION (PHP-rendered) ─────────── -->
-  <!-- ════════════════════════════════════════════ -->
-  <?php if (!$loggedIn): ?>
-  <div class="auth-container">
+  <!-- ░░ MENU SCREEN ░░ -->
+  <div id="screen-menu" class="screen active">
+    <div class="menu-box">
+      <h2>ENTER YOUR NAME</h2>
+      <p>Your score will be saved to the leaderboard</p>
+      <input type="text" class="name-input" id="player-name" placeholder="Player One" maxlength="20">
 
-    <!-- LOGIN FORM -->
-    <div id="loginForm" class="auth-card" style="display:block;">
-      <div class="auth-title">🧠 LOGIN</div>
-      <div class="auth-subtitle">Enter the Memory Arena</div>
+      <h2 style="margin-bottom:8px;">SELECT LEVEL</h2>
+      <p>Each level adds more cards and less time</p>
 
-      <?php if ($message): ?>
-      <div class="msg <?= $message_type ?>"><?= htmlspecialchars($message) ?></div>
-      <?php endif; ?>
-
-      <form method="POST">
-        <input type="hidden" name="action" value="login">
-        <div class="form-group">
-          <label>Username</label>
-          <input type="text" name="username" placeholder="Enter username" required autocomplete="username">
+      <div class="level-grid">
+        <div class="level-card easy" onclick="startGame('easy')">
+          <div class="level-icon">🌱</div>
+          <div class="level-title">EASY</div>
+          <div class="level-info">8 cards (4×2)<br>No time limit<br>Perfect for beginners</div>
         </div>
-        <div class="form-group">
-          <label>Password</label>
-          <input type="password" name="password" placeholder="Enter password" required autocomplete="current-password">
+        <div class="level-card medium" onclick="startGame('medium')">
+          <div class="level-icon">⚡</div>
+          <div class="level-title">MEDIUM</div>
+          <div class="level-info">16 cards (4×4)<br>90 seconds<br>Getting tricky</div>
         </div>
-        <button type="submit" class="btn-primary">⚡ Enter Game</button>
-      </form>
-
-      <div class="auth-switch">
-        No account? <a onclick="toggleAuth()">Create one</a>
-        &nbsp;|&nbsp; Demo: <strong style="color:var(--accent)">demo / demo123</strong>
-      </div>
-    </div>
-
-    <!-- REGISTER FORM -->
-    <div id="registerForm" class="auth-card" style="display:none;">
-      <div class="auth-title">🚀 REGISTER</div>
-      <div class="auth-subtitle">Join the Memory Arena</div>
-
-      <?php if ($message && $message_type === 'error'): ?>
-      <div class="msg error"><?= htmlspecialchars($message) ?></div>
-      <?php endif; ?>
-      <?php if ($message && $message_type === 'success'): ?>
-      <div class="msg success"><?= htmlspecialchars($message) ?></div>
-      <?php endif; ?>
-
-      <form method="POST">
-        <input type="hidden" name="action" value="register">
-        <div class="form-group">
-          <label>Username</label>
-          <input type="text" name="username" placeholder="Choose a username" required minlength="3">
+        <div class="level-card hard" onclick="startGame('hard')">
+          <div class="level-icon">🔥</div>
+          <div class="level-title">HARD</div>
+          <div class="level-info">24 cards (6×4)<br>75 seconds<br>Focus required</div>
         </div>
-        <div class="form-group">
-          <label>Password</label>
-          <input type="password" name="password" placeholder="Min 6 characters" required minlength="6">
+        <div class="level-card expert" onclick="startGame('expert')">
+          <div class="level-icon">💀</div>
+          <div class="level-title">EXPERT</div>
+          <div class="level-info">36 cards (6×6)<br>60 seconds<br>For legends only</div>
         </div>
-        <div class="form-group">
-          <label>Confirm Password</label>
-          <input type="password" name="confirm" placeholder="Repeat password" required>
-        </div>
-        <button type="submit" class="btn-primary">🎮 Create Account</button>
-      </form>
-
-      <div class="auth-switch">
-        Have an account? <a onclick="toggleAuth()">Login</a>
       </div>
     </div>
   </div>
 
-  <?php else: ?>
-  <!-- ════════════════════════════════════════════ -->
-  <!-- ─── GAME SECTION (JS-driven) ────────────── -->
-  <!-- ════════════════════════════════════════════ -->
-  <div class="game-container">
-
-    <!-- ─── LEVEL SELECT SCREEN ───────────────── -->
-    <div id="screenLevels" class="screen active">
-      <div class="level-title">🎮 SELECT LEVEL</div>
-      <div class="level-subtitle">Match all pairs to unlock the next level!</div>
-      <div class="levels-grid" id="levelsGrid"></div>
+  <!-- ░░ GAME SCREEN ░░ -->
+  <div id="screen-game" class="screen">
+    <div class="game-header">
+      <button class="btn-back" onclick="goMenu()">← Menu</button>
+      <span id="level-badge">EASY</span>
+      <div class="stats-bar">
+        <div class="stat">
+          <div class="stat-label">Moves</div>
+          <div class="stat-value" id="stat-moves">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Pairs</div>
+          <div class="stat-value" id="stat-pairs">0/0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Time</div>
+          <div class="stat-value" id="stat-time">--</div>
+        </div>
+      </div>
     </div>
 
-    <!-- ─── GAME BOARD SCREEN ─────────────────── -->
-    <div id="screenGame" class="screen">
-      <div class="game-header">
-        <button class="btn-back" onclick="goLevelSelect()">← Levels</button>
-        <div class="game-stat">
-          <div class="label">Level</div>
-          <div class="value" id="statLevel">1</div>
-        </div>
-        <div class="game-stat">
-          <div class="label">Moves</div>
-          <div class="value" id="statMoves">0</div>
-        </div>
-        <div class="game-stat">
-          <div class="label">Time</div>
-          <div class="value" id="statTime">0s</div>
-        </div>
-        <div class="game-stat">
-          <div class="label">Pairs</div>
-          <div class="value" id="statPairs">0/0</div>
-        </div>
-        <button class="btn-modal secondary" style="padding:8px 14px;font-size:0.78rem;border-radius:8px;cursor:pointer;background:transparent;border:1px solid var(--border);color:var(--text-dim);font-family:'Exo 2',sans-serif;" onclick="restartGame()">↺ Restart</button>
+    <div class="progress-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+
+    <div id="card-grid"></div>
+  </div>
+</div>
+
+<!-- ░░ WIN OVERLAY ░░ -->
+<div id="win-overlay">
+  <div class="win-box">
+    <div class="win-emoji" id="win-emoji">🏆</div>
+    <div class="win-title" id="win-title">YOU WIN!</div>
+    <div class="win-sub" id="win-sub">Amazing memory!</div>
+    <div class="win-stats">
+      <div class="win-stat">
+        <div class="win-stat-label">Moves</div>
+        <div class="win-stat-value" id="win-moves">0</div>
       </div>
-      <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
-      <div class="card-grid" id="cardGrid"></div>
+      <div class="win-stat">
+        <div class="win-stat-label">Time</div>
+        <div class="win-stat-value" id="win-time">0s</div>
+      </div>
+    </div>
+    <div id="leaderboard-section" class="leaderboard"></div>
+    <div style="margin-top:16px;">
+      <button class="btn-primary" id="btn-next-level">Next Level ▶</button>
+      <button class="btn-primary" onclick="restartGame()">Play Again ↺</button>
+      <button class="btn-secondary" onclick="goMenu()">Menu</button>
     </div>
   </div>
-
-  <!-- ─── WIN MODAL ─────────────────────────────── -->
-  <div class="modal-overlay" id="winModal">
-    <div class="modal">
-      <div class="modal-icon">🏆</div>
-      <div class="modal-title">Level Complete!</div>
-      <div class="modal-stats">
-        <div class="mstat"><div class="ml">Moves</div><div class="mv" id="mMoves">0</div></div>
-        <div class="mstat"><div class="ml">Time</div><div class="mv" id="mTime">0s</div></div>
-        <div class="mstat"><div class="ml">Stars</div><div class="mv" id="mStars">⭐⭐⭐</div></div>
-      </div>
-      <div class="modal-msg" id="mMsg">Excellent memory!</div>
-      <div class="modal-btns">
-        <button class="btn-modal primary" id="btnNextLevel">Next Level ➜</button>
-        <button class="btn-modal secondary" onclick="restartGame()">↺ Retry</button>
-        <button class="btn-modal secondary" onclick="goLevelSelect()">📋 Levels</button>
-      </div>
-    </div>
-  </div>
-
-  <?php endif; ?>
-</div><!-- /wrapper -->
+</div>
 
 <script>
-/* ══════════════════════════════════════════════════
-   AUTH TOGGLE
-══════════════════════════════════════════════════ */
-function toggleAuth() {
-  const l = document.getElementById('loginForm');
-  const r = document.getElementById('registerForm');
-  if (!l || !r) return;
-  if (l.style.display !== 'none') {
-    l.style.display = 'none'; r.style.display = 'block';
-  } else {
-    l.style.display = 'block'; r.style.display = 'none';
-  }
-}
-
-<?php if ($loggedIn): ?>
-/* ══════════════════════════════════════════════════
-   GAME DATA
-══════════════════════════════════════════════════ */
-const LEVELS = [
-  { id:1, name:'Rookie',    icon:'🌱', pairs:4,  cols:4, timeGoal:30,  moveGoal:10, emojis:'🐶🐱🐭🐹' },
-  { id:2, name:'Explorer',  icon:'🔥', pairs:6,  cols:4, timeGoal:45,  moveGoal:14, emojis:'🍎🍊🍋🍇🍓🍑' },
-  { id:3, name:'Warrior',   icon:'⚔️', pairs:8,  cols:4, timeGoal:60,  moveGoal:18, emojis:'🚀🌙⭐🌍☄️🛸🪐💫' },
-  { id:4, name:'Master',    icon:'💎', pairs:10, cols:5, timeGoal:75,  moveGoal:22, emojis:'🦁🐯🐻🦊🐺🦄🐲🦋🦅🐬' },
-  { id:5, name:'Legend',    icon:'👑', pairs:12, cols:6, timeGoal:90,  moveGoal:28, emojis:'🏆🥇🎯🎮🎲🎪🎨🎭🎬🎤🎸🎹' },
+// ── EMOJI SETS ──────────────────────────────────────────────
+const EMOJI_POOL = [
+  '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼',
+  '🐨','🐯','🦁','🐮','🐷','🐸','🐙','🦋',
+  '🌸','🌺','🌻','🌹','🍎','🍊','🍋','🍇',
+  '🎸','🎺','🎹','🎻','⚽','🏀','🎾','🏈',
+  '🚀','🛸','🌙','⭐','🎮','🕹️','💎','🔮'
 ];
 
-let playerData = { level: 1, best: {} };
-let currentLevel = null;
-let cards = [];
-let flipped = [];
-let matched = 0;
-let moves = 0;
-let timer = null;
-let seconds = 0;
-let locked = false;
-let totalPairs = 0;
+// ── LEVEL CONFIG ─────────────────────────────────────────────
+const LEVELS = {
+  easy:   { pairs: 4,  cols: 4, timeLimit: 0,  label: 'EASY',   color: '#00ff88', next: 'medium' },
+  medium: { pairs: 8,  cols: 4, timeLimit: 90, label: 'MEDIUM', color: '#ffd700', next: 'hard'   },
+  hard:   { pairs: 12, cols: 6, timeLimit: 75, label: 'HARD',   color: '#ff006e', next: 'expert' },
+  expert: { pairs: 18, cols: 6, timeLimit: 60, label: 'EXPERT', color: '#7b2fff', next: null     }
+};
 
-/* ══════════════════════════════════════════════════
-   INIT
-══════════════════════════════════════════════════ */
-async function init() {
-  const res = await fetch('?get_scores=1');
-  playerData = await res.json();
-  renderLevels();
-}
+// ── GAME STATE ───────────────────────────────────────────────
+let state = {
+  level: 'easy',
+  cards: [],
+  flipped: [],
+  matched: 0,
+  moves: 0,
+  startTime: null,
+  elapsed: 0,
+  timerInterval: null,
+  countdownInterval: null,
+  timeLeft: 0,
+  canFlip: true,
+  gameOver: false
+};
 
-/* ══════════════════════════════════════════════════
-   LEVEL SELECT
-══════════════════════════════════════════════════ */
-function renderLevels() {
-  const grid = document.getElementById('levelsGrid');
-  grid.innerHTML = '';
-  LEVELS.forEach(lv => {
-    const unlocked = lv.id <= playerData.level;
-    const best = playerData.best['level_' + lv.id];
-    const div = document.createElement('div');
-    div.className = 'level-card ' + (unlocked ? 'unlocked' : 'locked');
-    div.innerHTML = `
-      <div class="level-icon">${lv.icon}</div>
-      <div class="level-name">LEVEL ${lv.id}</div>
-      <div class="level-info">${lv.name} · ${lv.pairs} Pairs</div>
-      ${best ? `<div class="level-best">⭐ Best: ${best.moves} moves, ${best.time}s</div>` : ''}
-      ${!unlocked ? '<div class="level-lock">🔒</div>' : ''}
-    `;
-    if (unlocked) div.onclick = () => startLevel(lv.id);
-    grid.appendChild(div);
-  });
-}
-
-function goLevelSelect() {
-  clearInterval(timer);
-  showScreen('screenLevels');
-  renderLevels();
-  hideModal();
-}
-
-/* ══════════════════════════════════════════════════
-   START LEVEL
-══════════════════════════════════════════════════ */
-function startLevel(lvId) {
-  currentLevel = LEVELS.find(l => l.id === lvId);
-  totalPairs = currentLevel.pairs;
-  matched = 0; moves = 0; seconds = 0; flipped = []; locked = false;
-  clearInterval(timer);
-
-  document.getElementById('statLevel').textContent = currentLevel.id;
-  document.getElementById('statMoves').textContent = '0';
-  document.getElementById('statTime').textContent  = '0s';
-  document.getElementById('statPairs').textContent = `0/${totalPairs}`;
-  document.getElementById('progressFill').style.width = '0%';
-
-  // Build card data
-  const emojis = currentLevel.emojis.split(/(?<=\p{Emoji_Presentation}|\p{Extended_Pictographic})/gu).filter(Boolean).slice(0, totalPairs);
-  let deck = [...emojis, ...emojis].sort(() => Math.random() - 0.5);
-
-  // Render grid
-  const grid = document.getElementById('cardGrid');
-  grid.innerHTML = '';
-  const cols = currentLevel.cols;
-  grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
-  const size = Math.min(Math.floor(580 / cols) - 10, 90);
-  grid.style.maxWidth = (size * cols + 10 * (cols - 1)) + 'px';
-
-  cards = deck.map((emoji, i) => {
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.style.width = size + 'px'; card.style.height = size + 'px';
-    card.dataset.emoji = emoji;
-    card.dataset.index = i;
-    card.innerHTML = `
-      <div class="card-inner">
-        <div class="card-back"></div>
-        <div class="card-front" style="font-size:${Math.floor(size*0.42)}px">${emoji}</div>
-      </div>`;
-    card.onclick = () => flipCard(card);
-    grid.appendChild(card);
-    return card;
-  });
-
-  showScreen('screenGame');
-
-  // Start timer after short delay
-  setTimeout(() => {
-    timer = setInterval(() => {
-      seconds++;
-      document.getElementById('statTime').textContent = seconds + 's';
-    }, 1000);
-  }, 300);
-}
-
-function restartGame() { if (currentLevel) startLevel(currentLevel.id); }
-
-/* ══════════════════════════════════════════════════
-   CARD FLIP LOGIC
-══════════════════════════════════════════════════ */
-function flipCard(card) {
-  if (locked || card.classList.contains('flipped') || card.classList.contains('matched')) return;
-  card.classList.add('flipped');
-  flipped.push(card);
-
-  if (flipped.length === 2) {
-    locked = true;
-    moves++;
-    document.getElementById('statMoves').textContent = moves;
-
-    const [a, b] = flipped;
-    if (a.dataset.emoji === b.dataset.emoji) {
-      // Match!
-      setTimeout(() => {
-        a.classList.add('matched', 'pop');
-        b.classList.add('matched', 'pop');
-        matched++;
-        flipped = []; locked = false;
-        document.getElementById('statPairs').textContent = `${matched}/${totalPairs}`;
-        document.getElementById('progressFill').style.width = (matched / totalPairs * 100) + '%';
-        if (matched === totalPairs) onWin();
-      }, 300);
-    } else {
-      // No match
-      setTimeout(() => {
-        a.classList.add('shake'); b.classList.add('shake');
-        setTimeout(() => {
-          a.classList.remove('flipped', 'shake');
-          b.classList.remove('flipped', 'shake');
-          flipped = []; locked = false;
-        }, 400);
-      }, 600);
-    }
+// ── UTILS ────────────────────────────────────────────────────
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
   }
+  return a;
 }
 
-/* ══════════════════════════════════════════════════
-   WIN
-══════════════════════════════════════════════════ */
-async function onWin() {
-  clearInterval(timer);
-  const lv = currentLevel;
-  const stars = calcStars(lv, moves, seconds);
-
-  document.getElementById('mMoves').textContent = moves;
-  document.getElementById('mTime').textContent  = seconds + 's';
-  document.getElementById('mStars').textContent = '⭐'.repeat(stars) + '☆'.repeat(3 - stars);
-  document.getElementById('mMsg').textContent   = stars === 3 ? '🔥 Perfect! Flawless memory!' :
-                                                   stars === 2 ? '👏 Great job! Well played!' : '💪 Level cleared! Keep going!';
-
-  // Save score to PHP
-  const res = await fetch('', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `action=save_score&level=${lv.id}&moves=${moves}&time=${seconds}`
-  });
-  const data = await res.json();
-  playerData.level = data.unlocked_level;
-
-  // Next level button
-  const nextBtn = document.getElementById('btnNextLevel');
-  if (lv.id < 5) {
-    nextBtn.style.display = '';
-    nextBtn.onclick = () => { hideModal(); startLevel(lv.id + 1); };
-    nextBtn.textContent = `Next Level ➜`;
-  } else {
-    nextBtn.textContent = '🏆 All Levels Done!';
-    nextBtn.onclick = goLevelSelect;
-  }
-
-  confetti();
-  showModal('winModal');
+function getPlayerName() {
+  return document.getElementById('player-name').value.trim() || 'Player';
 }
 
-function calcStars(lv, mv, t) {
-  if (mv <= lv.moveGoal && t <= lv.timeGoal) return 3;
-  if (mv <= lv.moveGoal * 1.5 && t <= lv.timeGoal * 1.5) return 2;
-  return 1;
-}
-
-/* ══════════════════════════════════════════════════
-   HELPERS
-══════════════════════════════════════════════════ */
+// ── SCREEN NAVIGATION ────────────────────────────────────────
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
 }
-function showModal(id) { document.getElementById(id).classList.add('show'); }
-function hideModal()   { document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('show')); }
 
-function confetti() {
-  const colors = ['#00d4ff','#ff3cac','#7b2fff','#ffd700','#00ff88'];
-  for (let i = 0; i < 60; i++) {
+function goMenu() {
+  clearTimers();
+  document.getElementById('win-overlay').classList.remove('show');
+  showScreen('screen-menu');
+}
+
+// ── START GAME ───────────────────────────────────────────────
+function startGame(level) {
+  const cfg = LEVELS[level];
+  state = {
+    level,
+    cards: [],
+    flipped: [],
+    matched: 0,
+    moves: 0,
+    startTime: Date.now(),
+    elapsed: 0,
+    timerInterval: null,
+    countdownInterval: null,
+    timeLeft: cfg.timeLimit,
+    canFlip: true,
+    gameOver: false
+  };
+
+  // Build card data
+  const emojis = shuffle(EMOJI_POOL).slice(0, cfg.pairs);
+  const cardData = shuffle([...emojis, ...emojis]).map((emoji, i) => ({
+    id: i,
+    emoji,
+    flipped: false,
+    matched: false
+  }));
+  state.cards = cardData;
+
+  // Level badge
+  const badge = document.getElementById('level-badge');
+  badge.textContent = cfg.label;
+  badge.style.borderColor = cfg.color;
+  badge.style.color = cfg.color;
+
+  // Stats
+  updateStats();
+  document.getElementById('progress-bar').style.width = '0%';
+
+  // Build grid
+  buildGrid(cfg);
+
+  showScreen('screen-game');
+  startTimers(cfg);
+}
+
+function buildGrid(cfg) {
+  const grid = document.getElementById('card-grid');
+  grid.innerHTML = '';
+
+  // Dynamic card size
+  const maxW = Math.min(window.innerWidth - 32, 920);
+  const cardSize = Math.floor((maxW - (cfg.cols - 1) * 10) / cfg.cols);
+
+  grid.style.gridTemplateColumns = `repeat(${cfg.cols}, 1fr)`;
+  grid.style.maxWidth = maxW + 'px';
+
+  state.cards.forEach(card => {
     const el = document.createElement('div');
-    el.className = 'confetti-piece';
-    el.style.cssText = `
-      left: ${Math.random() * 100}vw;
-      top: -10px;
-      background: ${colors[Math.floor(Math.random() * colors.length)]};
-      width: ${5 + Math.random() * 8}px;
-      height: ${5 + Math.random() * 8}px;
-      animation-duration: ${1.5 + Math.random() * 2}s;
-      animation-delay: ${Math.random() * 0.5}s;
-      border-radius: ${Math.random() > 0.5 ? '50%' : '2px'};
+    el.className = 'card';
+    el.dataset.id = card.id;
+    el.innerHTML = `
+      <div class="card-face card-back"></div>
+      <div class="card-face card-front">${card.emoji}</div>
     `;
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 4000);
+    el.addEventListener('click', () => flipCard(card.id));
+    grid.appendChild(el);
+  });
+}
+
+// ── TIMERS ───────────────────────────────────────────────────
+function startTimers(cfg) {
+  clearTimers();
+
+  // Elapsed timer
+  state.timerInterval = setInterval(() => {
+    state.elapsed = Math.floor((Date.now() - state.startTime) / 1000);
+    if (cfg.timeLimit === 0) {
+      document.getElementById('stat-time').textContent = state.elapsed + 's';
+      document.getElementById('stat-time').classList.remove('moves-warn');
+    }
+  }, 500);
+
+  // Countdown timer
+  if (cfg.timeLimit > 0) {
+    state.timeLeft = cfg.timeLimit;
+    updateCountdown();
+    state.countdownInterval = setInterval(() => {
+      state.timeLeft--;
+      updateCountdown();
+      if (state.timeLeft <= 0) {
+        clearTimers();
+        timeUp();
+      }
+    }, 1000);
   }
 }
 
-// Close modal on overlay click
-document.getElementById('winModal')?.addEventListener('click', function(e) {
-  if (e.target === this) hideModal();
-});
+function updateCountdown() {
+  const el = document.getElementById('stat-time');
+  el.textContent = state.timeLeft + 's';
+  if (state.timeLeft <= 10) {
+    el.classList.add('moves-warn');
+  } else {
+    el.classList.remove('moves-warn');
+  }
+}
 
-init();
-<?php endif; ?>
+function clearTimers() {
+  clearInterval(state.timerInterval);
+  clearInterval(state.countdownInterval);
+}
+
+function timeUp() {
+  state.gameOver = true;
+  state.canFlip = false;
+  document.getElementById('win-emoji').textContent = '⏰';
+  document.getElementById('win-title').textContent = 'TIME\'S UP!';
+  document.getElementById('win-sub').textContent = `You matched ${state.matched} of ${LEVELS[state.level].pairs} pairs.`;
+  document.getElementById('win-moves').textContent = state.moves;
+  document.getElementById('win-time').textContent = LEVELS[state.level].timeLimit + 's';
+  document.getElementById('btn-next-level').style.display = 'none';
+  document.getElementById('leaderboard-section').innerHTML = '';
+  document.getElementById('win-overlay').classList.add('show');
+}
+
+// ── FLIP CARD ────────────────────────────────────────────────
+function flipCard(id) {
+  if (!state.canFlip || state.gameOver) return;
+
+  const card = state.cards[id];
+  if (card.flipped || card.matched) return;
+  if (state.flipped.length === 2) return;
+
+  card.flipped = true;
+  document.querySelector(`.card[data-id="${id}"]`).classList.add('flipped');
+  state.flipped.push(id);
+
+  if (state.flipped.length === 2) {
+    state.moves++;
+    updateStats();
+    checkMatch();
+  }
+}
+
+function checkMatch() {
+  state.canFlip = false;
+  const [a, b] = state.flipped;
+  const cardA = state.cards[a];
+  const cardB = state.cards[b];
+
+  if (cardA.emoji === cardB.emoji) {
+    // Match!
+    setTimeout(() => {
+      cardA.matched = cardB.matched = true;
+      document.querySelector(`.card[data-id="${a}"]`).classList.add('matched');
+      document.querySelector(`.card[data-id="${b}"]`).classList.add('matched');
+      state.matched++;
+      state.flipped = [];
+      state.canFlip = true;
+      updateStats();
+      updateProgress();
+      if (state.matched === LEVELS[state.level].pairs) {
+        clearTimers();
+        setTimeout(showWin, 400);
+      }
+    }, 400);
+  } else {
+    // No match
+    setTimeout(() => {
+      document.querySelector(`.card[data-id="${a}"]`).classList.add('shake');
+      document.querySelector(`.card[data-id="${b}"]`).classList.add('shake');
+      setTimeout(() => {
+        cardA.flipped = cardB.flipped = false;
+        document.querySelector(`.card[data-id="${a}"]`).classList.remove('flipped', 'shake');
+        document.querySelector(`.card[data-id="${b}"]`).classList.remove('flipped', 'shake');
+        state.flipped = [];
+        state.canFlip = true;
+      }, 350);
+    }, 700);
+  }
+}
+
+// ── UI UPDATES ───────────────────────────────────────────────
+function updateStats() {
+  const cfg = LEVELS[state.level];
+  document.getElementById('stat-moves').textContent = state.moves;
+  document.getElementById('stat-pairs').textContent = `${state.matched}/${cfg.pairs}`;
+}
+
+function updateProgress() {
+  const cfg = LEVELS[state.level];
+  const pct = (state.matched / cfg.pairs) * 100;
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+
+// ── WIN ──────────────────────────────────────────────────────
+function showWin() {
+  const cfg = LEVELS[state.level];
+  const finalTime = cfg.timeLimit > 0
+    ? cfg.timeLimit - state.timeLeft
+    : state.elapsed;
+
+  const ratings = [
+    { threshold: cfg.pairs * 1.2, emoji: '🏆', title: 'PERFECT!',    sub: 'Extraordinary memory!' },
+    { threshold: cfg.pairs * 1.6, emoji: '🌟', title: 'EXCELLENT!',  sub: 'You\'re a memory master!' },
+    { threshold: cfg.pairs * 2.2, emoji: '👏', title: 'WELL DONE!',  sub: 'Great concentration!' },
+    { threshold: Infinity,         emoji: '😊', title: 'YOU WIN!',    sub: 'Keep practicing!' }
+  ];
+  const rating = ratings.find(r => state.moves <= r.threshold);
+
+  document.getElementById('win-emoji').textContent = rating.emoji;
+  document.getElementById('win-title').textContent = rating.title;
+  document.getElementById('win-sub').textContent = rating.sub;
+  document.getElementById('win-moves').textContent = state.moves;
+  document.getElementById('win-time').textContent = finalTime + 's';
+
+  const nextBtn = document.getElementById('btn-next-level');
+  if (cfg.next) {
+    nextBtn.style.display = '';
+    nextBtn.onclick = () => {
+      document.getElementById('win-overlay').classList.remove('show');
+      startGame(cfg.next);
+    };
+  } else {
+    nextBtn.style.display = 'none';
+  }
+
+  document.getElementById('win-overlay').classList.add('show');
+  launchConfetti();
+
+  // Save score via PHP
+  saveScore(state.level, state.moves, finalTime);
+}
+
+function restartGame() {
+  document.getElementById('win-overlay').classList.remove('show');
+  startGame(state.level);
+}
+
+// ── CONFETTI ─────────────────────────────────────────────────
+function launchConfetti() {
+  const colors = ['#00f5ff','#ff006e','#7b2fff','#ffd700','#00ff88','#fff'];
+  for (let i = 0; i < 60; i++) {
+    setTimeout(() => {
+      const p = document.createElement('div');
+      p.className = 'confetti-piece';
+      p.style.left = Math.random() * 100 + 'vw';
+      p.style.background = colors[Math.floor(Math.random() * colors.length)];
+      p.style.animationDuration = (1.5 + Math.random() * 1.5) + 's';
+      p.style.animationDelay = Math.random() * .5 + 's';
+      p.style.transform = `rotate(${Math.random()*360}deg)`;
+      document.body.appendChild(p);
+      setTimeout(() => p.remove(), 3000);
+    }, i * 30);
+  }
+}
+
+// ── PHP SCORE SAVE ───────────────────────────────────────────
+async function saveScore(level, moves, time) {
+  try {
+    const fd = new FormData();
+    fd.append('action', 'save_score');
+    fd.append('level', level);
+    fd.append('moves', moves);
+    fd.append('time', time);
+    fd.append('name', getPlayerName());
+
+    const res = await fetch(window.location.href, { method: 'POST', body: fd });
+    const data = await res.json();
+
+    if (data.success && data.scores.length > 0) {
+      renderLeaderboard(data.scores);
+    }
+  } catch (e) {
+    // Fallback: show without leaderboard if PHP not running
+    document.getElementById('leaderboard-section').innerHTML = '';
+  }
+}
+
+function renderLeaderboard(scores) {
+  const section = document.getElementById('leaderboard-section');
+  if (!scores.length) { section.innerHTML = ''; return; }
+
+  const medals = ['🥇','🥈','🥉','4️⃣','5️⃣'];
+  section.innerHTML = `<div class="lb-title">🏆 Top Scores — ${LEVELS[state.level].label}</div>` +
+    scores.map((s, i) => `
+      <div class="lb-row">
+        <span class="lb-rank">${medals[i]||i+1}</span>
+        <span class="lb-name">${s.name}</span>
+        <span class="lb-score">${s.moves} moves · ${s.time}s</span>
+      </div>
+    `).join('');
+}
 </script>
 </body>
 </html>
